@@ -2,6 +2,29 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const {service}=require('../node/online.cjs'),{within,files,runCommand}=require('../node/engine.cjs');
 const url='https://github.com/makecindy/eval-bank/releases/download/test/index.json';
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex');
+test('corrupt bank replacement preserves the old tree on verification, cancellation and publication failures',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'bank-repair-')),rename=fs.rename;
+ try{
+  const spec=JSON.stringify({id:'fixture',revision:'v1'}),archive=path.join(root,'archive'),bytes=Buffer.from('fake archive');await fs.writeFile(archive,bytes);
+  const sha=digest(bytes),name=sha+'.zip',q={key:'fixture@v1',revision:'v1',path:'question',files:{'question.json':digest(spec)},layers:[{artifact:name,mount:''}]};
+  const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),sha256:sha,bytes:bytes.length,expandedBytes:spec.length}}};
+  let mode='normal',ready,release;const svc=service({base:async()=>root,within,files,fetchFile:async(u,d)=>{const b=JSON.stringify(index);await fs.writeFile(d,b);return {sha256:digest(b)};},runCommand:async(c,args)=>{await fs.writeFile(path.join(args[2],'question.json'),mode==='invalid'?'bad':spec);if(mode==='cancel'){ready();await new Promise(r=>release=r);}return {code:0};}});
+  const inspected=await svc.inspect({root,url}),p={root,indexId:inspected.indexId,question:q.key,hostArtifacts:{[sha]:archive}};
+  const installed=await svc.install(p),manifest=path.join(installed.bank,'distribution.json');await fs.writeFile(manifest,'broken');
+  mode='invalid';await assert.rejects(svc.install(p),/校验/);assert.equal(await fs.readFile(manifest,'utf8'),'broken');
+  mode='cancel';const started=new Promise(r=>ready=r),op=svc.begin({root}),run=svc.install({...p,...op}),rejected=assert.rejects(run,/取消/);await started;const stop=svc.cancel({root,...op});release();await stop;await rejected;assert.equal(await fs.readFile(manifest,'utf8'),'broken');
+  mode='normal';fs.rename=async(a,b)=>{if(String(a).includes('/staging-')&&b===installed.bank)throw Object.assign(Error('publish failed'),{code:'EIO'});return rename(a,b);};
+  await assert.rejects(svc.install(p));assert.equal(await fs.readFile(manifest,'utf8'),'broken');fs.rename=rename;
+  await svc.install(p);assert.equal(JSON.parse(await fs.readFile(manifest)).format,'eval-lab-bank-v1');
+  const backups=await fs.readdir(path.join(root,'online/backups'));assert.equal(backups.length,1);assert.equal(await fs.readFile(path.join(root,'online/backups',backups[0],'distribution.json'),'utf8'),'broken');
+ }finally{fs.rename=rename;await fs.rm(root,{recursive:true,force:true});}
+});
+test('damaged installed metadata does not prevent the page from loading or starting default repair',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'bank-catalog-'));try{
+  const dir=path.join(root,'eval-lab-data/online/banks','a'.repeat(64));await fs.mkdir(dir,{recursive:true});
+  for(const text of ['null','{broken',JSON.stringify({format:'eval-lab-bank-v1',questions:null})]){await fs.writeFile(path.join(dir,'distribution.json'),text);const result=await require('../node/engine.cjs').dispatch('bank',{root});assert.equal(result.questions.length,0);assert.equal(result.errors.length,1);}
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 function fixture(root){const name='a'.repeat(64)+'.zip',index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[{key:'fixture@v1',path:'questions/fixture',files:{},layers:[{artifact:name,mount:''}]}],artifacts:{[name]:{url:url.replace('index.json',name),bytes:1,expandedBytes:1,sha256:'a'.repeat(64)}}},text=JSON.stringify(index);return {id:digest(text),svc:service({base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{await fs.writeFile(d,text);return {sha256:digest(text)};}})};}
 test('offline cache isolates damaged entries and an online check repairs the same index',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'index-recovery-'));

@@ -19,7 +19,7 @@
       "description": "Create a private draft from task excerpts explicitly selected by the user; do not scan other history or start a model."
     },
     "calibrate_question": {
-      "description": "Execute local grader code from the trusted draft against original, reference and incomplete controls; return a check ID for user freezing in the main page."
+      "description": "Execute local grader code from the trusted draft against original, reference and incomplete controls. For page-authored drafts, first confirm task completion and import verified materials, retrying an unfinished handoff if needed. Return a check ID for user freezing in the main page."
     }
   }
 }

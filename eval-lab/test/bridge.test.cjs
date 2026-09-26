@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=requir
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
 function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-model',name:'Model',agent:'codex',providerId:'own-account',providerName:'My account',efforts:['low','high'],defaultEffort:'low'}]}){
  let onMessage,bc,cfg=structuredClone(initial);const calls=[],replies=[],runs=new Map(),tasks=new Map();let sequence=0;
- const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(['online_inspect','online_cached'].includes(x.method))result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
+ const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='author_stage')result={directory:x.params.workspace+'/author'};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(['online_inspect','online_cached'].includes(x.method))result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
  capabilities:async()=>({operations:['create','send','getRun']}),
  create:async x=>{calls.push({create:x});const task={taskId:'t'+(++sequence),revision:1,resolvedConfig:x.route,workingDir:'/isolated/'+sequence,permissionMode:'auto'};tasks.set(task.taskId,task);return task;},
  setTeamPlan:async x=>{calls.push({setTeamPlan:x});return {ok:true};},releaseWorker:async x=>{calls.push({releaseWorker:x});return {ok:true};},get:async x=>tasks.get(x.taskId),startTeam:async()=>({ok:true,teamId:'team'}),getTeam:async()=>({ok:true,leadWorking:true,workers:[]}),
@@ -13,6 +13,18 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  return {calls,replies,runs,get config(){return cfg;},tool:m=>onMessage(m),ui:(id,action,args={})=>bc.onmessage({data:{type:'request',id,action,args}}),cindy};
 }
 const args={questions:['audio@v2'],configurations:[configuration]};
+test('oversized batches fail before any question download or installation',async()=>{
+ const b=bridge();await b.ui('large','start',{questions:Array.from({length:201},(_,i)=>'question-'+i),configurations:[configuration]});
+ assert.equal(b.replies.find(x=>x.id==='large').ok,false);
+ assert.equal(b.calls.some(x=>['online_inspect','online_plan','online_install','prepare'].includes(x.method)),false);
+ assert.equal(b.calls.some(x=>x.create),false);
+});
+test('legacy partial frozen plans cannot silently resume or acquire omitted members',async()=>{
+ const b=bridge({root:'/selected',batch:{id:'old',mode:'coordinator',status:'needs_attention',phase:'blocked',plan:{prompt:'frozen'},registeredPlan:2,items:[{runId:'missing',status:'blocked'}]}});
+ await b.ui('resume','resume_coordination');
+ assert.equal(b.replies.at(-1).ok,false);assert.match(b.replies.at(-1).message,/计划已冻结/);
+ assert.equal(b.config.batch.status,'needs_attention');assert.equal(b.calls.some(x=>x.send||x.setTeamPlan||x.method==='prepare'),false);
+});
 test('calibration uses one bounded request per control with the same identity and call authority',async()=>{
  const b=bridge(),requests=[];
  b.cindy.node.request=async x=>{requests.push(x);return {ok:true,result:x.method==='calibrate_begin'?{checkId:'same-check'}:x.method==='calibrate_finish'?{checkId:'same-check',ok:true}:{}};};
@@ -116,6 +128,24 @@ test('authoring is single flight and uses a random draft identity',async()=>{
  assert.equal(b.replies.at(-1).ok,false);assert.equal(b.config.author.id,original);
  assert.equal(b.calls.filter(x=>x.method==='draft').length,1);
 });
+test('author task receives host-local materials and collects output only after completed receipt',async()=>{
+ const b=bridge();await b.ui('author','author',{records:[]});
+ const staged=b.calls.find(x=>x.method==='author_stage');assert.equal(staged.params.workspace,'/isolated/1');assert.equal(staged.params.taskId,'t1');
+ assert.match(b.calls.find(x=>x.send).send.text,/\/isolated\/1\/author/);
+ await b.ui('running','status');assert.equal(b.calls.some(x=>x.method==='author_collect'),false);
+ b.runs.get('r1').status='completed';await b.ui('complete','status');
+ assert.ok(b.calls.findIndex(x=>x.method==='author_collect')<b.calls.findIndex(x=>x.method==='calibrate_begin'));
+ assert.equal(b.config.author.status,'calibrated');
+});
+test('explicit calibration retries a failed import but never imports a running author task',async()=>{
+ const b=bridge();await b.ui('author','author',{records:[]});const request=b.cindy.node.request;let fail=true;
+ const args={id:b.config.author.id,revision:'v1'};
+ await b.tool({type:'tool-call',tool:'calibrate_question',callId:'early',args});assert.equal(b.calls.at(-1).ok,false);assert.equal(b.calls.some(x=>x.method==='author_collect'),false);
+ b.runs.get('r1').status='completed';b.cindy.node.request=async x=>{if(x.method==='author_collect'&&fail)throw Error('handoff disk error');return request(x);};
+ await b.ui('complete','status');assert.equal(b.config.author.status,'failed');fail=false;
+ await b.tool({type:'tool-call',tool:'calibrate_question',callId:'retry',args});assert.equal(b.calls.at(-1).ok,true);assert.ok(b.calls.some(x=>x.method==='author_collect'));
+ assert.equal(b.calls.filter(x=>x.send).length,1);
+});
 test('one or multiple cached online versions resolve through the configured index before any paid task',async()=>{
  for(const count of [1,2])for(const offline of [true,false]){
   const b=bridge(),request=b.cindy.node.request;let installed=false,inspected=0;
@@ -190,6 +220,11 @@ test('one failed preparation does not block other samples or create another Lead
  assert.equal(b.config.batch.items[0].status,'blocked');assert.ok(b.config.batch.items[1].prepared);
  const plan=b.calls.find(x=>x.method==='coordinator_plan').params;
  assert.equal(plan.items.length,1);assert.ok(plan.items[0].label.length<=32);
+ const saved={status:'graded',scoreExact:'1'};b.config.batch.items[1].status='graded';b.config.batch.items[1].result=saved;b.config.batch.items[1].qualityReviewed=true;
+ b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[]});
+ await b.ui('finish','query');assert.equal(b.config.batch.status,'completed');assert.equal(b.config.batch.phase,'completed');
+ assert.equal(b.config.batch.items[0].status,'blocked');assert.deepEqual(b.config.batch.items[1].result,saved);
+ assert.match(b.config.batch.message,/未运行、未计分/);assert.equal(b.calls.filter(x=>x.setTeamPlan).length,1);
 });
 test('declined team activation does not repeatedly prompt on automatic refresh',async()=>{
  const b=bridge();let calls=0;b.cindy.tasks.startTeam=async()=>{calls++;return {ok:false,message:'declined'};};

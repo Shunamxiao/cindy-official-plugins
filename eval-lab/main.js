@@ -114,7 +114,10 @@ async function advanceCoordinator(j){
    }
   }
   if(j.items.every(doneItem)&&!activeWorkers.length&&!team.leadWorking){j.status='completed';j.phase='completed';j.qualityVersion=1;j.message=j.items.some(x=>x.status==='environment_invalid')?'本批已结束；环境受阻的作答不计入正式总分。':'';}
-  else if(j.items.every(x=>doneItem(x)||x.status==='blocked')&&!activeWorkers.length&&!team.leadWorking){j.status='needs_attention';j.phase='blocked';j.message='部分作答受阻，已有成绩已保存。';}
+  else if(j.items.every(x=>doneItem(x)||x.status==='blocked')&&!activeWorkers.length&&!team.leadWorking){
+   if(j.items.every(x=>doneItem(x)||!x.prepared)){j.status='completed';j.phase='completed';j.qualityVersion=1;j.message='本批已结束，未准备的作答未运行、未计分。修复准备错误后可对遗漏题目开始新评测；已有成绩保留。';}
+   else {j.status='needs_attention';j.phase='blocked';j.message='部分作答受阻，已有成绩已保存。';}
+  }
   else {j.phase=activeWorkers.length?'answering':'coordinating';j.message='主任务按调度清单并行派发，交卷后独立评分并释放槽位。';}
   delete j.retryAt;delete j.readRetryCount;await saveBatch(j);
  }catch(e){if(e.message==='EVAL_STOP_REQUESTED')return stopBatch(j);await recordBatchError(j,e);}
@@ -316,6 +319,12 @@ async function questionCatalog(){
  return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.installedKey))],defaults};
 }
 async function sendAuthor(a){
+ if(a.handoff&&!a.handoff.ready){
+  const task=await cindy.tasks.get({taskId:a.taskId});
+  const prepared=await node('author_stage',{id:a.id,revision:a.revision,taskId:a.taskId,workspace:task.workingDir});
+  a={...a,handoff:{ready:true},pendingSend:{...a.pendingSend,text:'仅处理 '+JSON.stringify(prepared.directory)+' 中用户选定的记录，按 AUTHOR_TASK.md 创建题包。题目 id 必须为 '+JSON.stringify(a.id)+'，revision 必须为 '+JSON.stringify(a.revision)+'。完成后报告，由插件导回草稿并独立校准，无需调用 calibrate_question。不运行待测模型，不把聊天私密数据放进公开候选题。'}};
+  await updateConfig(c=>({...c,author:a}));
+ }
  if(a.permissionPending){
   try{
   let task=await cindy.tasks.get({taskId:a.taskId});
@@ -342,9 +351,16 @@ async function sendAuthor(a){
  const saved={...a,runId:run.runId,status:run.status};delete saved.pendingSend;
  await updateConfig(c=>({...c,author:saved}));return {taskId:a.taskId,status:run.status};
 }
+async function collectAuthor(a,run){
+ if(!a.handoff)return;
+ run=run||await cindy.tasks.getRun({runId:a.runId});
+ if(run.status!=='completed')throw Error('出题任务尚未完成，暂不能导回或校准。');
+ const task=await cindy.tasks.get({taskId:a.taskId});
+ await node('author_collect',{id:a.id,revision:a.revision,taskId:a.taskId,workspace:task.workingDir});
+}
 async function checkAuthor(){
  if(authorChecking||authorStarting)return;const a=(await config()).author;if(!a||!a.runId||['calibrated','failed'].includes(a.status))return;
- authorChecking=true;try{const r=await cindy.tasks.getRun({runId:a.runId});delete a.error;a.status=r.status;if(r.status==='completed'){a.calibration=await node('calibrate',{id:a.id,revision:a.revision});a.status='calibrated';}else if(['failed','cancelled','interrupted'].includes(r.status))a.status='failed';await updateConfig(c=>({...c,author:a}));}catch(e){await updateConfig(c=>({...c,author:{...a,...(a.status==='completed'?{status:'failed'}:{}),error:e.message}}));}finally{authorChecking=false;}
+ authorChecking=true;try{const r=await cindy.tasks.getRun({runId:a.runId});delete a.error;a.status=r.status;if(r.status==='completed'){await collectAuthor(a,r);a.calibration=await node('calibrate',{id:a.id,revision:a.revision});a.status='calibrated';}else if(['failed','cancelled','interrupted'].includes(r.status))a.status='failed';await updateConfig(c=>({...c,author:a}));}catch(e){await updateConfig(c=>({...c,author:{...a,...(a.status==='completed'?{status:'failed'}:{}),error:e.message}}));}finally{authorChecking=false;}
 }
 let launching=false,launchCancelled=false,authorStarting=false;
 async function action(name,args={},callId){
@@ -360,8 +376,9 @@ async function action(name,args={},callId){
    const models=await readModels();const configurations=args.configurations;
    if(!Array.isArray(configurations)||!configurations.length)throw Error('请选择模型和强度');
    const chosen=[...new Map(configurations.map(x=>{const c=verifiedConfiguration(x,models);return [JSON.stringify(c),c];})).values()];
-   const questions=await resolveQuestions([...new Set(args.questions)],true);if(questions.length*chosen.length>200)throw Error('单批最多 200 份作答，请分批运行');
+   const requested=[...new Set(args.questions)];if(requested.length*chosen.length>200)throw Error('单批最多 200 份作答，请分批运行');
    const concurrency=args.concurrency??null;if(concurrency!==null&&(!Number.isInteger(concurrency)||concurrency<1))throw Error('同时作答数必须为正整数');
+   const questions=await resolveQuestions(requested,true);
    if(launchCancelled)return {id:'preparation',status:'cancelled',phase:'cancelled',total:0,finished:0,items:[],message:'已停止准备。'};
    const batch={concurrency,id:crypto.randomUUID(),mode:'coordinator',status:'running',createdAt:new Date().toISOString(),items:questions.flatMap(question=>chosen.map(config=>({runId:crypto.randomUUID(),question,config,status:'pending'})))};
    await updateConfig(c=>({...c,batch}));if(launchCancelled){batch.stopRequestedAt=Date.now();await updateConfig(c=>({...c,batch}));return stopBatch(batch);}progress('题库已就绪，正在创建独立任务…');return await advanceBatch();
@@ -379,6 +396,7 @@ async function action(name,args={},callId){
  }
  if(name==='resume_coordination'){
   const j=(await config()).batch;if(j?.mode!=='coordinator')return advanceBatch();
+  if(j.plan&&j.items.some(x=>!doneItem(x)&&!x.prepared))throw Error('旧批次的计划已冻结，无法补入未准备的作答。请先停止本批，再为遗漏题目开始新评测；已有成绩保留。');
   j.checks=0;j.lastCheckAt=0;j.approvalAcknowledgedAt=Date.now();j.phase='coordinating';j.status='running';await saveBatch(j);return advanceBatch();
  }
  if(name==='cancel'){
@@ -404,16 +422,17 @@ async function action(name,args={},callId){
   if(current?.pendingSend)return await sendAuthor(current);
   if(current&&!['calibrated','failed'].includes(current.status))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
   await taskCapability();const draftId=args.id||'question-'+crypto.randomUUID();const revision=args.revision||'v1';
-  const d=await node('draft',{...args,id:draftId,revision},callId);
+  await node('draft',{...args,id:draftId,revision},callId);
   if(typeof args.name==='string')await updateConfig(c=>({...c,draftNames:{...c.draftNames,[draftId]:args.name.slice(0,60)}}));
   const task=await cindy.tasks.create({requestKey:'author:'+draftId+':'+revision,title:'评测工坊 · 创建题目',isolatedWorkspace:true});
-  const author={id:draftId,revision,taskId:task.taskId,status:'sending',pendingSend:{taskId:task.taskId,requestKey:'author-send:'+draftId+':'+revision,expectedRevision:task.revision,text:'仅处理 '+JSON.stringify(d.directory)+' 中用户选定的记录，按 AUTHOR_TASK.md 创建题包。完成后运行验证并报告。不运行待测模型，不把聊天私密数据放进公开候选题。'}};
+  const author={id:draftId,revision,taskId:task.taskId,status:'sending',handoff:{ready:false},pendingSend:{taskId:task.taskId,requestKey:'author-send:'+draftId+':'+revision,expectedRevision:task.revision}};
   author.permissionPending=task.permissionMode==='plan';
   await updateConfig(c=>({...c,author}));return await sendAuthor(author);
   }finally{authorStarting=false;}
  }
  if(name==='list_questions'){const {defaults,availableQuestions,...catalog}=await questionCatalog();return {...catalog,questions:availableQuestions};}
  if(name==='prepare_run'){const config=verifiedConfiguration(args,await readModels());return node('prepare',{...args,...config,question:(await resolveQuestions([args.question]))[0]},callId);}
+ if(name==='calibrate_question'){const a=(await config()).author;if(a?.handoff&&a.id===args.id&&a.revision===args.revision)await collectAuthor(a);return node('calibrate',args,callId);}
  const map={list_runs:'runs',export_report:'export',create_question_draft:'draft',calibrate_question:'calibrate'};
  if(!map[name])throw Error('Unknown action');return node(map[name],args,callId);
 }

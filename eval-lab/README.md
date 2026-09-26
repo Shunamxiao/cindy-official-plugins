@@ -32,9 +32,15 @@ Paste or explicitly select task excerpts; the plugin does not scan all history. 
 
 Answers, snapshots, diagnostics and drafts stay in local storage. Library contains settings and exported reports. Public reports omit raw diagnostics, chats, source files and local paths. Publishing a report means exporting a file; there is no automatic public hosting. Uninstalling does not delete your Library or external evaluation directory.
 
-Calibration runs the candidate, reference and incomplete control as separate bounded requests, under one draft identity. Completed step receipts are reused; an interrupted step with an unknown outcome is not automatically executed again. Draft changes invalidate the calibration. This does not yet provide crash recovery for grading or freezing locks.
+Calibration runs the candidate, reference and incomplete control as separate bounded requests. The draft snapshot determines a stable check ID, including after a lost response. Completed step receipts are reused; an interrupted step with an unknown outcome is not automatically executed again. Draft changes invalidate the calibration. This does not yet provide crash recovery for grading or freezing locks.
+
+One preparation failure does not block other answers. Once the planned answers finish and the team is idle, a batch whose remaining answers were never prepared ends with those omissions explicitly unscored, allowing a new evaluation. Frozen plans never acquire omitted members; saved scores remain intact. Older partial batches can be stopped before starting the omitted questions again.
 
 ## Development
+
+Authoring copies selected inputs into the host task's own directory. After the host confirms completion, the plugin validates question identity and regular-file contents, imports a fixed snapshot, and calibrates it. Original inputs and later task edits do not overwrite that snapshot. If import fails, the existing `calibrate_question` action can retry the handoff after the task is complete.
+
+Damaged online banks are rebuilt and verified before replacement. The old bank is retained under local `online/backups`; verification failures or cancellation before publication leave it in place. Publication failures attempt to restore it. This is not a cross-process transaction or crash-recovery guarantee; backups are not automatically deleted. Answers and scores are untouched.
 
 - `node --test test/core.test.cjs test/bridge.test.cjs test/online.test.cjs test/defaults.test.cjs test/standings.test.cjs test/execution-quality.test.cjs test/task-scope.test.cjs test/engine.test.cjs`
 - `EVAL_BROWSER_RUNTIME=<composer candidate/runtime> node --test test/view.test.cjs`
