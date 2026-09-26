@@ -23,8 +23,8 @@ test('download verifies, deduplicates runtimes, freezes versions, works offline;
  const archive=path.join(root,'fixture.zip');cp.execFileSync('python3',['-c',"import zipfile,sys,pathlib;z=zipfile.ZipFile(sys.argv[2],'w');[(z.write(p,p.relative_to(sys.argv[1]))) for p in pathlib.Path(sys.argv[1]).rglob('*') if p.is_file()];z.close()",src,archive]);const bytes=await fs.readFile(archive),h=hash(bytes),name=h+'.zip';const q={key:'fixture@v1',revision:'v1',path:'questions/fixture/v1',files:await files(src),layers:[{artifact:name,mount:''}]};
  const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),sha256:h,bytes:bytes.length,expandedBytes:(await fs.readFile(path.join(src,'question.json'))).length+5}}};let indexText=JSON.stringify(index),offline=false,calls=0,corrupt=false;
  const svc=service({base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{if(offline)throw Error('Offline');const b=u.endsWith('index.json')?Buffer.from(indexText):corrupt?Buffer.from('bad'):bytes;await fs.writeFile(d,b,{flag:'wx'});calls++;return {sha256:hash(b),bytes:b.length};}});
- const discovered=await svc.inspect({root,url});const p={root,indexId:discovered.indexId,question:q.key};const [a,b]=await Promise.all([svc.install(p),svc.install(p)]);assert.equal(a.bank,b.bank);assert.equal(calls,2);offline=true;assert.deepEqual(await svc.install(p),a);assert.equal(calls,2);
- offline=false;index.questions[0].title='Updated index';indexText=JSON.stringify(index);const next=await svc.inspect({root,url});const v2=await svc.install({...p,indexId:next.indexId});assert.notEqual(v2.bank,a.bank);assert.equal(calls,3);assert.equal((await svc.banks({root})).length,2);assert.ok(await fs.stat(a.bank));
+ const discovered=await svc.inspect({root,url});const p={root,indexId:discovered.indexId,question:q.key};const [a,b]=await Promise.all([svc.install(p),svc.install(p)]);assert.equal(a.bank,b.bank);assert.equal(calls,2);offline=true;assert.deepEqual((await svc.cached({root,url})).questions,discovered.questions);assert.deepEqual(await svc.install(p),a);assert.equal(calls,2);
+ offline=false;index.questions[0].title='Updated index';indexText=JSON.stringify(index);const next=await svc.inspect({root,url});assert.deepEqual((await svc.cached({root,url})).questions,next.questions);const v2=await svc.install({...p,indexId:next.indexId});assert.notEqual(v2.bank,a.bank);assert.equal(calls,3);assert.equal((await svc.banks({root})).length,2);assert.ok(await fs.stat(a.bank));
  await fs.writeFile(path.join(a.bank,q.path,'candidate/hello.js'),'tampered');await assert.rejects(svc.install(p),/已安装题库校验失败/);
  await fs.unlink(path.join(root,'online/artifacts',h+'.zip'));index.questions[0].title='New';indexText=JSON.stringify(index);const last=await svc.inspect({root,url});corrupt=true;await assert.rejects(svc.install({...p,indexId:last.indexId}),/题包校验或解压失败/);assert.equal((await svc.banks({root})).length,2);
  index.questions[0].title='Host downloaded';indexText=JSON.stringify(index);const hostIndex=await svc.inspect({root,url});
@@ -46,4 +46,12 @@ test('malformed and incompatible indices show actionable errors and remove tempo
    assert.deepEqual(await fs.readdir(path.join(root,'online')),[]);
   }
  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('response body errors are localized without raw diagnostics',async()=>{
+ const https=require('node:https'),{EventEmitter}=require('node:events'),{Readable}=require('node:stream'),original=https.get;
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'body-error-'));
+ try{for(const oversized of [false,true]){
+  https.get=(url,options,cb)=>{const req=new EventEmitter();req.setTimeout=()=>{};process.nextTick(()=>{const stream=new Readable({read(){if(oversized){this.push(Buffer.alloc(20));this.push(null);}else this.destroy(Error('PRIVATE raw transport diagnostic'));}});stream.statusCode=200;cb(stream);});return req;};
+  await assert.rejects(require('../node/online.cjs').download(url,path.join(root,String(oversized)),10),oversized?/校验失败.*维护者/:/连接失败.*重试/);
+ }}finally{https.get=original;await fs.rm(root,{recursive:true,force:true});}
 });

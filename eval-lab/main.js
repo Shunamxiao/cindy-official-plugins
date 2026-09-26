@@ -300,10 +300,10 @@ async function advanceBatchOnce(){
 let authorChecking=false;
 async function questionCatalog(){
  const bank=await node('bank'),c=await config();let current=[],catalogError;
- try{current=(await node('online_inspect',{url:c.indexUrl||DEFAULT_INDEX})).questions||[];}catch(e){catalogError=e.message;}
+ try{current=(await node('online_cached',{url:c.indexUrl||DEFAULT_INDEX})).questions||[];}catch(e){catalogError=e.message;}
  const defaults=(await defaultCatalog).map(d=>{
   const version=current.find(q=>q.key===d.key),installed=version&&bank.questions.find(q=>q.key===version.installedKey);
-  return {...d,...(version||{}),key:d.key,installedKey:installed?.key,unresolved:!version};
+  return {...d,...(version||{}),key:d.key,installedKey:installed?.key,unresolved:!version,cached:!!version};
  });
  return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.installedKey))],defaults};
 }

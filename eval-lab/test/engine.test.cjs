@@ -62,3 +62,23 @@ test('file manifests hash streams and respond to cancellation without whole-file
   await assert.rejects(files(root,'',controller.signal),/cancelled/);
  }finally{fs.readFile=original;await fs.rm(root,{recursive:true,force:true});}
 });
+test('prepare cleans partial copies and records, then retries the same run',async()=>{
+ const {files}=require('../node/engine.cjs');
+ for(const external of [false,true])for(const fail of ['copy','record']){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-prepare-failure-')),bank=path.join(root,'bank'),q=path.join(bank,'q'),candidate=path.join(q,'candidate');
+  const cp=fs.cp,open=fs.open;
+  try{
+   await fs.mkdir(candidate,{recursive:true});await fs.writeFile(path.join(candidate,'a.txt'),'answer');
+   await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));
+   await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'fixture@v1',path:'q',files:await files(q)}]}));
+   const workspace=path.join(root,'host');if(external)await fs.mkdir(workspace);
+   const p={root,bank,question:'fixture@v1',runId:'retry',model:'m',provider:'p',harness:'h',effort:'e',...(external?{workspace}:{})};
+   fs.cp=async(...args)=>{await cp(...args);if(fail==='copy')throw Error('copy interrupted');};
+   fs.open=async(...args)=>{const h=await open(...args);if(fail==='record'&&String(args[0]).endsWith('/run.json')){h.writeFile=async()=>{throw Error('record interrupted');};}return h;};
+   await assert.rejects(dispatch('prepare',p),/interrupted/);fs.cp=cp;fs.open=open;
+   if(external)assert.deepEqual(await fs.readdir(workspace),[]);
+   const r=await dispatch('prepare',p);assert.equal(await fs.readFile(path.join(r.workspace,'a.txt'),'utf8'),'answer');
+   assert.equal((await dispatch('prepare',p)).runId,r.runId);
+  }finally{fs.cp=cp;fs.open=open;await fs.rm(root,{recursive:true,force:true});}
+ }
+});
