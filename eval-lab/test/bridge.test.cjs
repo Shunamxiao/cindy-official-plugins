@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=requir
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
 function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-model',name:'Model',agent:'codex',providerId:'own-account',providerName:'My account',efforts:['low','high'],defaultEffort:'low'}]}){
  let onMessage,bc,cfg=structuredClone(initial);const calls=[],replies=[],runs=new Map(),tasks=new Map();let sequence=0;
- const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(x.method==='online_inspect')result={indexId:'fixture'};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
+ const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(x.method==='online_inspect')result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
  capabilities:async()=>({operations:['create','send','getRun']}),
  create:async x=>{calls.push({create:x});const task={taskId:'t'+(++sequence),revision:1,resolvedConfig:x.route,workingDir:'/isolated/'+sequence,permissionMode:'auto'};tasks.set(task.taskId,task);return task;},
  setTeamPlan:async x=>{calls.push({setTeamPlan:x});return {ok:true};},releaseWorker:async x=>{calls.push({releaseWorker:x});return {ok:true};},get:async x=>tasks.get(x.taskId),startTeam:async()=>({ok:true,teamId:'team'}),getTeam:async()=>({ok:true,leadWorking:true,workers:[]}),
@@ -13,6 +13,30 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  return {calls,replies,runs,get config(){return cfg;},tool:m=>onMessage(m),ui:(id,action,args={})=>bc.onmessage({data:{type:'request',id,action,args}}),cindy};
 }
 const args={questions:['audio@v2'],configurations:[configuration]};
+test('stop is durable before installation cancellation fails',async()=>{
+ const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let entered,finish;
+ const ready=new Promise(r=>entered=r),pending=new Promise(r=>finish=r);
+ b.cindy.node.request=async x=>{
+  if(x.method==='online_install'){entered();await pending;throw Error('下载已取消');}
+  if(x.method==='online_cancel'){assert.equal(b.config.batch.status,'stopping');assert.ok(b.config.batch.stopRequestedAt);throw Error('cancel transport unavailable');}
+  return request(x);
+ };
+ const install=b.ui('install','online_install',{indexId:'fixture',question:'audio@v2'});await ready;
+ await b.ui('stop','cancel');assert.equal(b.replies.find(r=>r.id==='stop').ok,false);
+ assert.ok(b.config.batch.stopRequestedAt);finish();await install;
+});
+test('published installation stays successful when cancellation arrives after commit',async()=>{
+ const b=bridge(),request=b.cindy.node.request;let entered,finish;
+ const ready=new Promise(r=>entered=r),published=new Promise(r=>finish=r);
+ b.cindy.node.request=async x=>{
+  if(x.method==='online_install'){entered();await published;return {ok:true,result:{bank:'/bank/fixture',key:'audio@v2'}};}
+  if(x.method==='online_cancel'){finish();return {ok:true,result:{ok:true}};}
+  return request(x);
+ };
+ const install=b.ui('install','online_install',{indexId:'fixture',question:'audio@v2'});await ready;
+ await b.ui('stop','cancel_download');await install;assert.equal(b.replies.find(r=>r.id==='install').ok,true);
+ assert.equal(b.replies.filter(r=>r.type==='download-progress').at(-1).phase,'ready');
+});
 test('both stop actions cancel the registered install and wait for cleanup',async()=>{
  for(const action of ['cancel','cancel_download']){
   const b=bridge(),request=b.cindy.node.request;let started,finish,drain;
@@ -321,7 +345,7 @@ test('author permission denial preserves one draft and task for later in-page ap
   return {granted:grant,task};
  };
  await b.ui('first','author',{records:[]});assert.equal(b.replies.at(-1).ok,false);
- const saved=JSON.parse(JSON.stringify(b.config.author));assert.ok(saved.pendingSend);
+ const saved=JSON.parse(JSON.stringify(b.config.author));assert.ok(saved.pendingSend);assert.match(saved.error,/草稿已保存/);
  assert.equal(b.calls.filter(x=>x.send).length,0);
  grant=true;if(external){const task=await b.cindy.tasks.get({taskId:saved.taskId});task.permissionMode='auto';task.revision=2;}
  await b.ui('again','author',{records:[],id:'should-not-create'});
@@ -336,20 +360,19 @@ test('explicit cached online key works offline without querying the default inde
  b.cindy.node.request=async x=>{if(x.method==='bank')return {ok:true,result:{questions:[{key,distributionHash:'a'}]}};if(x.method==='online_inspect')throw Error('must not fetch');return request(x);};
  await b.ui('start','start',{...args,questions:[key]});assert.equal(b.replies.at(-1).ok,true);assert.equal(b.config.batch.items[0].question,key);
 });
-test('default catalog is shared by status and tools, retaining exact score identity',async()=>{
+test('default catalog follows current index rather than counting cached versions',async()=>{
  const standings=require('../standings.js');
  for(const versions of [0,1,2]){
   const b=bridge(),request=b.cindy.node.request;
-  const qs=Array.from({length:versions},(_,i)=>({key:'online:release'+i+':audio@v2',questionId:'audio',revision:'v2',releaseHash:'release'+i,distributionHash:'same-files'}));
-  b.cindy.node.request=async x=>x.method==='bank'?{ok:true,result:{questions:qs}}:request(x);
+  const qs=Array.from({length:versions},(_,i)=>({key:'online:release'+i+':audio@v2',questionId:'audio',revision:'v2',releaseHash:'release'+i,distributionHash:'files'+i}));
+  const current={key:'audio@v2',installedKey:'online:release1:audio@v2',questionId:'audio',revision:'v2',releaseHash:'release1',distributionHash:'files1'};
+  b.cindy.node.request=async x=>x.method==='bank'?{ok:true,result:{questions:qs}}:x.method==='online_inspect'?{ok:true,result:{questions:[current]}}:request(x);
   await b.ui('catalog','status');const q=b.replies.at(-1).result.banks[0].questions[0];
-  assert.equal(q.key,'audio@v2');assert.equal(q.unresolved,versions>1);
-  if(versions===1){assert.equal(standings.questionKey(q),standings.questionKey(qs[0]));assert.equal(standings.aggregate([{...qs[0],model:'m',status:'graded',scoreExact:'1'}],[q]).length,1);}
-  else assert.equal(q.releaseHash,undefined);
-  await b.tool({type:'tool-call',tool:'list_questions',callId:'catalog'});
-  const result=b.calls.find(x=>x.type==='tool-result').result;assert.equal(result.questions.length,versions||1);
-  if(versions)assert.equal(JSON.stringify(result.questions),JSON.stringify(qs));else assert.equal(result.questions[0].key,q.key);
-  assert.equal(b.calls.some(x=>x.create||x.send||x.method==='online_inspect'),false);
+  assert.equal(q.unresolved,false);assert.equal(q.releaseHash,'release1');
+  assert.equal(standings.aggregate(qs.map(x=>({...x,model:'m',status:'graded',scoreExact:'1'})),[q]).length,versions===2?1:0);
+  b.cindy.node.request=async x=>{if(x.method==='online_inspect')throw Error('offline');return x.method==='bank'?{ok:true,result:{questions:qs}}:request(x);};
+  await b.ui('offline','status');assert.equal(b.replies.at(-1).result.banks[0].questions[0].unresolved,true);
+  assert.equal(b.calls.some(x=>x.create||x.send),false);
  }
 });
 test('prepare tool resolves an uninstalled default but retains offline installed keys',async()=>{

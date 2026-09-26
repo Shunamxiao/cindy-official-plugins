@@ -1,4 +1,10 @@
 const english={
+'题库安装未完成，请重试；仍失败请联系题库维护者。':'Bank installation did not finish. Retry or contact its maintainer.',
+'已安装题库校验失败，请在高级设置中重新导入可信题库或联系维护者；已有成绩保留。':'Installed bank verification failed. Import a trusted bank in Advanced settings or contact its maintainer; existing results are preserved.',
+'题包校验或解压失败，请重新下载；仍失败请联系题库维护者。':'Bank verification or extraction failed. Download it again or contact its maintainer.',
+'题库无法写入，请检查可用磁盘空间和插件存储权限后重试。':'Cannot write the bank. Check free disk space and plugin storage permissions before retrying.',
+
+'继续出题':'Continue authoring',
 '题库连接失败，请检查网络、DNS 或代理设置后重试；已有离线题库仍可使用。':'Bank connection failed. Check your network, DNS or proxy settings and retry; installed offline banks remain available.',
 '题库安全连接验证失败，请检查系统时间和代理证书，或联系题库维护者；不要关闭证书校验。':'Bank secure connection verification failed. Check your system clock and proxy certificates, or contact the bank maintainer; do not disable certificate verification.',
 '出题请求未被受理，请检查任务配置和插件权限后重新创建。':'The authoring request was not accepted. Check the task configuration and plugin permissions before creating it again.',
@@ -17,7 +23,8 @@ const english={
 '正在自动恢复':'Recovering automatically',
 '恢复评测':'Resume evaluation',
 '停止准备':'Stop preparation','已收到停止请求。':'Stop requested.','已停止准备。':'Preparation stopped.',
-'存在多个评分版本，请在高级筛选中选择；不同版本不混算。':'Multiple scoring versions are installed. Choose a version in advanced filters.',
+'无法核对现行题库版本；可在高级筛选中查看已安装版本，版本之间不混算。':'Cannot verify the current bank version. View installed versions in advanced filters; versions are scored separately.',
+'出题草稿已保存。请在插件详情允许修改文件后继续出题。':'Your authoring draft is saved. Allow file changes in plugin details, then continue authoring.',
 '模型成绩':'Model results','选一个题库，看看谁更适合你的工作。':'Choose a bank to compare your models.','最新成绩':'Latest results','历次平均':'Average results','成绩统计方式':'Scoring view','高级筛选':'Advanced filters','题目与版本':'Question and version','测试批次':'Evaluation batch','全部现行题目':'All current questions','全部测试':'All evaluations','历史版本':'Historical version','旧版题目单独查看，不与现行题库混算。':'Historical versions are shown separately.','分享成绩':'Share results','分享当前榜单，自动汇总有效成绩；不附聊天、源码与本机路径。':'Share this leaderboard without chats, source code or local paths.','每题取最近一次有效成绩，补测自动合并。':'Latest valid result per question; retests fill missing results.','每题先取有效作答平均分，再合计；重复测试不增加题目权重。':'Average each question before summing; repeated tests do not increase its weight.','已测齐':'Complete','已得分':'Points earned','已测':'Completed','待补测':'Not yet graded','最近一次环境受阻':'Latest attempt was blocked','已计入':'Included','尚无此版本的有效成绩':'No valid results for this version','这个题库还没有成绩。开始评测后，模型总成绩会显示在这里。':'No results for this bank yet. Run an evaluation to see model scores.','未知费用不记零；完整成绩与未测齐成绩分开排序。':'Unknown costs are not zero; incomplete results rank separately.','费用 USD':'Cost USD','时间未知':'Date unknown','排队':'Queue','评分':'Grading',
 
 '同时作答数':'Concurrent answers','环境受阻，不计分':'Environment blocked — unscored','环境受阻':'Environment blocked','等待审批':'Awaiting approval','队列暂停':'Queue paused','模型正在执行':'Model executing','等待可用 Worker 槽位':'Waiting for a Worker slot','等待主任务派发':'Awaiting coordinator dispatch',

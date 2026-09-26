@@ -25,13 +25,13 @@ test('download verifies, deduplicates runtimes, freezes versions, works offline;
  const svc=service({base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{if(offline)throw Error('Offline');const b=u.endsWith('index.json')?Buffer.from(indexText):corrupt?Buffer.from('bad'):bytes;await fs.writeFile(d,b,{flag:'wx'});calls++;return {sha256:hash(b),bytes:b.length};}});
  const discovered=await svc.inspect({root,url});const p={root,indexId:discovered.indexId,question:q.key};const [a,b]=await Promise.all([svc.install(p),svc.install(p)]);assert.equal(a.bank,b.bank);assert.equal(calls,2);offline=true;assert.deepEqual(await svc.install(p),a);assert.equal(calls,2);
  offline=false;index.questions[0].title='Updated index';indexText=JSON.stringify(index);const next=await svc.inspect({root,url});const v2=await svc.install({...p,indexId:next.indexId});assert.notEqual(v2.bank,a.bank);assert.equal(calls,3);assert.equal((await svc.banks({root})).length,2);assert.ok(await fs.stat(a.bank));
- await fs.writeFile(path.join(a.bank,q.path,'candidate/hello.js'),'tampered');await assert.rejects(svc.install(p),/changed/);
- await fs.unlink(path.join(root,'online/artifacts',h+'.zip'));index.questions[0].title='New';indexText=JSON.stringify(index);const last=await svc.inspect({root,url});corrupt=true;await assert.rejects(svc.install({...p,indexId:last.indexId}),/integrity/);assert.equal((await svc.banks({root})).length,2);
+ await fs.writeFile(path.join(a.bank,q.path,'candidate/hello.js'),'tampered');await assert.rejects(svc.install(p),/已安装题库校验失败/);
+ await fs.unlink(path.join(root,'online/artifacts',h+'.zip'));index.questions[0].title='New';indexText=JSON.stringify(index);const last=await svc.inspect({root,url});corrupt=true;await assert.rejects(svc.install({...p,indexId:last.indexId}),/题包校验或解压失败/);assert.equal((await svc.banks({root})).length,2);
  index.questions[0].title='Host downloaded';indexText=JSON.stringify(index);const hostIndex=await svc.inspect({root,url});
  const planned=await svc.plan({root,indexId:hostIndex.indexId,question:q.key});assert.equal(planned.artifacts[0].sha256,h);
  const hostArgs={root,indexId:hostIndex.indexId,question:q.key,requireHostDownloads:true};
  await assert.rejects(svc.install(hostArgs),/更新 Cindy/);
- await assert.rejects(svc.install({...hostArgs,downloads:{}}),/Host artifact/);
+ await assert.rejects(svc.install({...hostArgs,downloads:{}}),/题包校验或解压失败/);
  const hostResult=await svc.install({...hostArgs,downloads:{['artifact_'+h]:archive}});assert.ok(await fs.stat(hostResult.bank));
  const invalid=structuredClone(index);invalid.questions[0].layers[0].mount='../escape';assert.throws(()=>validate(invalid,url));
  }finally{await fs.rm(root,{recursive:true,force:true});}

@@ -1,6 +1,7 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评测工坊</title><link rel="stylesheet" href="view.css"></head><body><main>
 <header><div><h1>评测工坊</h1><p>用真实工作，找到适合自己的模型。</p></div></header>
 <nav role="tablist" aria-label="评测页面"><button id="tab-run" role="tab" aria-selected="true" aria-controls="run-page">开始评测</button><button id="tab-history" role="tab" aria-selected="false" aria-controls="history-page">历史成绩 <span id="history-count" class="hint">0</span></button></nav><div id="status" role="status" aria-live="polite"></div>
+<button id="resume-author" class="quiet" hidden type="button">继续出题</button>
 <section id="run-page" role="tabpanel" aria-labelledby="tab-run">
 <fieldset id="setup"><div class="field-title"><label for="bank">题库</label><button class="quiet hint" id="import">导入题库</button></div>
 <div class="bank-line"><select id="bank" aria-label="选择题库"></select></div>

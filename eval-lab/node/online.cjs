@@ -25,6 +25,15 @@ function validate(index,url){source(url);try{return validateRaw(index,url);}catc
 function parseIndex(text,url){let value;try{value=JSON.parse(text);}catch{throw Error(invalidIndex);}return validate(value,url);}
 const inflight=new Map();
 function once(key,fn){if(!inflight.has(key))inflight.set(key,Promise.resolve().then(fn).finally(()=>inflight.delete(key)));return inflight.get(key);}
+function installError(e){
+ if(e.name==='AbortError'||e.message==='下载已取消')return e;
+ let code='INSTALL_FAILED',message='题库安装未完成，请重试；仍失败请联系题库维护者。';
+ if(/更新 Cindy/.test(e.message)){code='HOST_UPDATE_REQUIRED';message='请更新 Cindy 以使用受管下载';}
+ else if(/Cached question changed/.test(e.message)){code='CACHE_DAMAGED';message='已安装题库校验失败，请在高级设置中重新导入可信题库或联系维护者；已有成绩保留。';}
+ else if(/integrity|content mismatch|identity mismatch|解压失败/i.test(e.message)){code='PACKAGE_INVALID';message='题包校验或解压失败，请重新下载；仍失败请联系题库维护者。';}
+ else if(['ENOSPC','EACCES','EPERM'].includes(e.code)){code='STORAGE_UNAVAILABLE';message='题库无法写入，请检查可用磁盘空间和插件存储权限后重试。';}
+ return Object.assign(Error(message),{code});
+}
 function service({base,within,files,runCommand,fetchFile=download}){
  const operations=new Map();
  function begin(p){
@@ -42,16 +51,16 @@ function service({base,within,files,runCommand,fetchFile=download}){
   operations.delete(p.operationId);return {ok:true};
  }
  function install(p){
-  if(!p.operationId)return installFiles(p);
+  if(!p.operationId)return installFiles(p).catch(e=>{throw installError(e);});
   const op=operations.get(p.operationId);
   if(!op||op.root!==p.root)throw Error('下载已取消');
   if(op.done)throw Error('Install already started');
-  op.done=installFiles({...p,signal:op.controller.signal}).finally(()=>operations.delete(p.operationId));
+  op.done=installFiles({...p,signal:op.controller.signal}).catch(e=>{throw installError(e);}).finally(()=>operations.delete(p.operationId));
   return op.done;
  }
 
  async function home(root){const h=await base(root),d=await within(h,'online');await fs.mkdir(d,{recursive:true});return d;}
- async function inspect(p){const h=await home(p.root),tmp=path.join(h,crypto.randomUUID()+'.part');try{const hash=await fetchFile(p.url,tmp,16*1024*1024);const index=parseIndex(await fs.readFile(tmp,'utf8'),p.url);const dest=path.join(h,'indices',hash.sha256);await fs.mkdir(dest,{recursive:true});try{await fs.writeFile(path.join(dest,'index.json'),JSON.stringify({url:p.url,index}),{flag:'wx'});}catch(e){if(e.code!=='EEXIST')throw e;}return {indexId:hash.sha256,questions:index.questions.map(q=>({key:q.key,title:q.title,revision:q.revision,bytes:[...new Set(q.layers.map(l=>l.artifact))].reduce((n,k)=>n+index.artifacts[k].bytes,0)}))};}finally{await fs.rm(tmp,{force:true});}}
+ async function inspect(p){const h=await home(p.root),tmp=path.join(h,crypto.randomUUID()+'.part');try{const hash=await fetchFile(p.url,tmp,16*1024*1024);const index=parseIndex(await fs.readFile(tmp,'utf8'),p.url);const dest=path.join(h,'indices',hash.sha256);await fs.mkdir(dest,{recursive:true});try{await fs.writeFile(path.join(dest,'index.json'),JSON.stringify({url:p.url,index}),{flag:'wx'});}catch(e){if(e.code!=='EEXIST')throw e;}return {indexId:hash.sha256,questions:index.questions.map(q=>({key:q.key,title:q.title,revision:q.revision,questionId:q.key.split('@')[0],releaseHash:q.sourceManifestSha256,distributionHash:digest(JSON.stringify(q.files)),installedKey:'online:'+digest(JSON.stringify(q))+':'+q.key,bytes:[...new Set(q.layers.map(l=>l.artifact))].reduce((n,k)=>n+index.artifacts[k].bytes,0)}))};}finally{await fs.rm(tmp,{force:true});}}
  async function plan(p){if(!/^[a-f0-9]{64}$/.test(p.indexId))throw Error('Invalid index ID');const h=await home(p.root),saved=JSON.parse(await fs.readFile(path.join(h,'indices',p.indexId,'index.json'),'utf8')),index=validate(saved.index,saved.url),q=index.questions.find(q=>q.key===p.question);if(!q)throw Error('Question not found');return {artifacts:[...new Set(q.layers.map(l=>l.artifact))].map(k=>index.artifacts[k])};}
  async function installFiles(p){const signal=p.signal;signal?.throwIfAborted();if(p.requireHostDownloads){if(!p.downloads||typeof p.downloads!=='object')throw Error('请更新 Cindy 以使用受管下载');p={...p,hostArtifacts:Object.fromEntries(Object.entries(p.downloads).filter(([k])=>/^artifact_[a-f0-9]{64}$/.test(k)).map(([k,v])=>[k.slice(9),v]))};}if(!/^[a-f0-9]{64}$/.test(p.indexId))throw Error('Invalid index ID');const h=await home(p.root);return once(h+':'+p.indexId+':'+p.question+(p.operationId?':'+p.operationId:''),async()=>{signal?.throwIfAborted();const saved=JSON.parse(await fs.readFile(path.join(h,'indices',p.indexId,'index.json'),'utf8'));const index=validate(saved.index,saved.url),q=index.questions.find(q=>q.key===p.question);if(!q)throw Error('Question not found');const release=digest(JSON.stringify(q));const dest=await within(h,'banks/'+release);const result={bank:dest,key:q.key,title:q.title};try{const m=JSON.parse(await fs.readFile(path.join(dest,'distribution.json'),'utf8'));const actual=await files(path.join(dest,q.path),'',signal);if(JSON.stringify(m.questions)!==JSON.stringify([q])||Object.keys(actual).length!==Object.keys(q.files).length||Object.entries(q.files).some(([f,h])=>actual[f]!==h))throw Error('Cached question changed');return result;}catch(e){if(e.code!=='ENOENT')throw e;}
  const staging=await fs.mkdtemp(path.join(h,'staging-'));try{const target=path.join(staging,q.path);await fs.mkdir(target,{recursive:true});for(const l of q.layers){signal?.throwIfAborted();const a=index.artifacts[l.artifact],cache=p.hostArtifacts?p.hostArtifacts[a.sha256]:await within(h,'artifacts/'+a.sha256+'.zip');if(p.hostArtifacts){if(typeof cache!=='string'||(await fs.stat(cache)).size!==a.bytes||await fileHash(cache,signal)!==a.sha256)throw Error('Host artifact integrity failure');}if(!p.hostArtifacts){await fs.mkdir(path.dirname(cache),{recursive:true});await once(cache,async()=>{try{if((await fs.stat(cache)).size===a.bytes&&await fileHash(cache,signal)===a.sha256)return;}catch(e){if(e.code!=='ENOENT')throw e;}const temp=cache+'.'+crypto.randomUUID()+'.part';try{await fetchFile(a.url,temp,a.bytes,a);if(await fileHash(temp,signal)!==a.sha256||(await fs.stat(temp)).size!==a.bytes)throw Error('Artifact integrity failure');await fs.rename(temp,cache);}finally{await fs.rm(temp,{force:true});}});}const unpack=await runCommand('python3',[path.join(__dirname,'unpack.py'),cache,path.join(target,l.mount),String(a.expandedBytes)],{timeout:120000,signal});signal?.throwIfAborted();if(unpack.code!==0)throw Error('题库解压失败: '+(unpack.stderr||unpack.error));}

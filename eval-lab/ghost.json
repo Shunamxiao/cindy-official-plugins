@@ -12,7 +12,7 @@
   "tools": [
     {
       "name": "list_questions",
-      "description": "列出默认和个人冻结题目，不启动模型。",
+      "description": "列出默认题目、已导入题库及个人冻结题目，不启动模型。",
       "parameters": {
         "type": "object",
         "properties": {},

@@ -50,3 +50,15 @@ test('ungraded terminal failures survive reload without replacing existing score
   await dispatch('record_failure',p);assert.equal((await dispatch('runs',{root}))[0].scoreExact,'1/2');assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,'result.json'))),result);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('file manifests hash streams and respond to cancellation without whole-file reads',async()=>{
+ const {files}=require('../node/engine.cjs'),crypto=require('node:crypto');
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-stream-hash-')),data=Buffer.alloc(2*1024*1024,31),original=fs.readFile;
+ try{
+  await fs.writeFile(path.join(root,'large'),data);
+  fs.readFile=async()=>{throw Error('whole-file read forbidden');};
+  assert.deepEqual(await files(root),{large:crypto.createHash('sha256').update(data).digest('hex')});
+  const controller=new AbortController();controller.abort(Error('cancelled'));
+  await assert.rejects(files(root,'',controller.signal),/cancelled/);
+ }finally{fs.readFile=original;await fs.rm(root,{recursive:true,force:true});}
+});
