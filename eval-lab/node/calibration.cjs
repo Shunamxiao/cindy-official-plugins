@@ -26,13 +26,21 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   }
   if(matches.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
   if(matches.length===1)return {checkId:matches[0]};
-  try{await fs.mkdir(checks);}catch(e){
-   if(e.code!=='EEXIST')throw e;
-   let existing;try{existing=await read(path.join(checks,'plan.json'));}catch{throw Error('校准准备尚未确认，请稍后重试；不要重复执行评分。');}
+  await fs.mkdir(checks,{recursive:true});
+  const dest=path.join(checks,'plan.json');
+  try{
+   const existing=await read(dest);
    if(JSON.stringify(existing)!==JSON.stringify(plan))throw Error('Calibration identity conflict');
    return {checkId};
-  }
-  await write(path.join(checks,'plan.json'),plan);
+  }catch(e){if(e.code!=='ENOENT')throw e;}
+  // No execution can precede a published plan. Recover only preparation files;
+  // unknown attempts or receipts require execution recovery, never reinitialization.
+  if((await fs.readdir(checks)).some(name=>name!=='plan.json'&&!/^plan-[0-9a-f-]+\.tmp$/.test(name)))throw Error('Calibration preparation has execution evidence; recovery required');
+  const tmp=path.join(checks,'plan-'+crypto.randomUUID()+'.tmp');
+  try{
+   await write(tmp,plan);
+   try{await fs.link(tmp,dest);}catch(e){if(e.code!=='EEXIST')throw e;if(JSON.stringify(await read(dest))!==JSON.stringify(plan))throw Error('Calibration identity conflict');}
+  }finally{await fs.rm(tmp,{force:true});}
   return {checkId};
  }
  async function context(p){

@@ -521,3 +521,14 @@ test('empty or incomplete archived receipts do not prove cancellation',async()=>
   await b.ui('stop','cancel');await b.ui('poll','query');assert.equal(b.config.batch.status,'stopping');assert.equal(b.calls.filter(x=>x.send).length,1);
  }
 });
+test('author creation identity survives lost create replies and receipt persistence failures',async()=>{
+ for(const failure of ['reply','save']){
+  const b=bridge(),create=b.cindy.tasks.create,library=b.cindy.library;let task,fail=true;const requests=[];
+  b.cindy.tasks.create=async request=>{assert.deepEqual(JSON.parse(JSON.stringify(request)),b.config.author.pendingCreate);requests.push(JSON.parse(JSON.stringify(request)));task??=await create(request);if(failure==='reply'&&fail)throw Error('lost reply');return task;};
+  b.cindy.library=async x=>x.op==='write'&&JSON.parse(x.content).author?.taskId&&failure==='save'&&fail?{ok:false,message:'disk unavailable'}:library(x);
+  await b.ui('first','author',{records:[]});assert.equal(b.replies.at(-1).ok,false);const original=b.config.author.id;assert.equal(b.config.author.status,'creating');
+  await b.ui('status','status');assert.equal(b.replies.at(-1).result.author.canResume,true);
+  fail=false;await b.ui('retry','author',{id:'different',records:[]});assert.equal(b.replies.at(-1).ok,true);
+  assert.equal(b.config.author.id,original);assert.deepEqual(requests[0],requests[1]);assert.equal(b.calls.filter(x=>x.create).length,1);assert.equal(b.calls.filter(x=>x.method==='draft').length,1);assert.equal(b.config.author.pendingCreate,undefined);
+ }
+});

@@ -40,3 +40,14 @@ test('legacy random check IDs survive a lost response without replaying an unkno
  await assert.rejects(dispatch('calibrate_step',{root,checkId:legacy,step:0}),{code:'EEXIST'});
  assert.deepEqual(await fs.readdir(parent),[legacy]);
 }));
+test('missing plan recovers preparation only, publishes atomically and preserves unknown attempts',()=>fixture(async(root)=>{
+ const p={root,id:'sample',revision:'v1'},first=await dispatch('calibrate_begin',p),folder=path.join(root,'eval-lab-data/calibrations',first.checkId),plan=path.join(folder,'plan.json');
+ const bytes=await fs.readFile(plan);await fs.unlink(plan);await fs.writeFile(path.join(folder,'plan-deadbeef.tmp'),'{partial');
+ const write=fs.writeFile;let failed=false;
+ fs.writeFile=async(file,...args)=>{if(String(file).includes('/plan-')&&!failed){failed=true;throw Object.assign(Error('disk full'),{code:'ENOSPC'});}return write(file,...args);};
+ try{await assert.rejects(dispatch('calibrate_begin',p),{code:'ENOSPC'});}finally{fs.writeFile=write;}
+ await assert.rejects(fs.access(plan));
+ const recovered=await Promise.all([dispatch('calibrate_begin',p),dispatch('calibrate_begin',p)]);assert.deepEqual(recovered,[first,first]);assert.deepEqual(await fs.readFile(plan),bytes);
+ await fs.unlink(plan);await fs.mkdir(path.join(folder,'attempt-0'));await assert.rejects(dispatch('calibrate_begin',p),/execution evidence/);await assert.rejects(fs.access(plan));
+ await fs.writeFile(plan,'{broken');await assert.rejects(dispatch('calibrate_begin',p));assert.equal(await fs.readFile(plan,'utf8'),'{broken');
+}));

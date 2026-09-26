@@ -1,6 +1,7 @@
 const english={
 '按最近核验的题库版本显示；开始评测时检查在线更新。':'Showing the last verified bank version; starting an evaluation checks online updates.',
 '下载内容校验失败，请重新获取题库；仍失败请联系维护者。':'Downloaded content could not be verified. Fetch the bank again or contact its maintainer.',
+'题库解包超时，请检查磁盘负载或改用更快的存储后重试；已有题库和成绩保留。':'Bank extraction timed out. Check disk load or use faster storage and retry. Existing banks and results are preserved.',
 '题库安装未完成，请重试；仍失败请联系题库维护者。':'Bank installation did not finish. Retry or contact its maintainer.',
 '已安装题库校验失败，请在高级设置中重新导入可信题库或联系维护者；已有成绩保留。':'Installed bank verification failed. Import a trusted bank in Advanced settings or contact its maintainer; existing results are preserved.',
 '题包校验或解压失败，请重新下载；仍失败请联系题库维护者。':'Bank verification or extraction failed. Download it again or contact its maintainer.',

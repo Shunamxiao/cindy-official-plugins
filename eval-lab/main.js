@@ -318,6 +318,13 @@ async function questionCatalog(){
  });
  return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.installedKey))],defaults};
 }
+async function createAuthor(a){
+ const task=await cindy.tasks.create(a.pendingCreate);
+ const author={...a,taskId:task.taskId,status:'sending',handoff:{ready:false},permissionPending:task.permissionMode==='plan',pendingSend:{taskId:task.taskId,requestKey:'author-send:'+a.id+':'+a.revision,expectedRevision:task.revision}};
+ delete author.pendingCreate;
+ await updateConfig(c=>({...c,author}));
+ return sendAuthor(author);
+}
 async function sendAuthor(a){
  if(a.handoff&&!a.handoff.ready){
   const task=await cindy.tasks.get({taskId:a.taskId});
@@ -366,7 +373,7 @@ let launching=false,launchCancelled=false,authorStarting=false;
 async function action(name,args={},callId){
  if(launching&&['setup_root','setup_bank','save_source'].includes(name))throw Error('评测正在准备，完成后可更改设置');
  if(name==='setup_root'||name==='setup_bank'){const r=await checked(cindy.pick({mode:'directory',title:name==='setup_root'?'选择评测数据保存目录':'选择解压后的评测题包目录'}));if(r.cancelled)return {cancelled:true};if(name==='setup_root')await updateConfig(c=>({...c,root:r.path}));else {await checked(cindy.node.request({method:'bank',params:{root:(await readyConfig()).root,bank:r.path},timeoutMs:30000}));await updateConfig(c=>({...c,importedBanks:[...(c.importedBanks||[]).filter(b=>b.path!==r.path),{id:crypto.randomUUID(),name:r.name||'导入题库',path:r.path}]}));}return {name:r.name};}
- if(name==='status'){await checkAuthor();let models=[],modelError=null;try{models=await readModels();}catch(e){modelError=e.message;}void advanceBatch().catch(()=>{});const c=await readyConfig();const job=jobView(c.batch);const bank=await questionCatalog();const defaults=bank.defaults;const extra=bank.questions.filter(q=>!defaults.some(d=>q.key===d.key));return {configured:true,models,modelError,modelsUpdatedAt:modelError?null:new Date().toISOString(),automaticRoot:!c.root||c.automaticRoot,bank:{questions:[...defaults,...extra]},banks:[{id:'default',name:'Cindy 实战题库',error:bank.catalogError,questions:defaults},...(c.importedBanks||[]).map(b=>({id:'imported:'+b.id,name:b.name,error:bank.errors?.find(e=>e.id===b.id)?.message,questions:bank.questions.filter(q=>q.key.startsWith('imported:'+b.id+':'))})),...extra.filter(q=>!q.key.startsWith('imported:')).map(q=>({id:q.key,name:(c.draftNames||{})[q.key.split('@')[0].replace('custom:','')]||q.title,questions:[q]}))],runs:await node('runs'),drafts:await node('drafts'),author:c.author?{status:c.author.status,error:c.author.error,canResume:!!c.author.pendingSend}:null,job:job||c.job||null,indexUrl:c.indexUrl||DEFAULT_INDEX};}
+ if(name==='status'){await checkAuthor();let models=[],modelError=null;try{models=await readModels();}catch(e){modelError=e.message;}void advanceBatch().catch(()=>{});const c=await readyConfig();const job=jobView(c.batch);const bank=await questionCatalog();const defaults=bank.defaults;const extra=bank.questions.filter(q=>!defaults.some(d=>q.key===d.key));return {configured:true,models,modelError,modelsUpdatedAt:modelError?null:new Date().toISOString(),automaticRoot:!c.root||c.automaticRoot,bank:{questions:[...defaults,...extra]},banks:[{id:'default',name:'Cindy 实战题库',error:bank.catalogError,questions:defaults},...(c.importedBanks||[]).map(b=>({id:'imported:'+b.id,name:b.name,error:bank.errors?.find(e=>e.id===b.id)?.message,questions:bank.questions.filter(q=>q.key.startsWith('imported:'+b.id+':'))})),...extra.filter(q=>!q.key.startsWith('imported:')).map(q=>({id:q.key,name:(c.draftNames||{})[q.key.split('@')[0].replace('custom:','')]||q.title,questions:[q]}))],runs:await node('runs'),drafts:await node('drafts'),author:c.author?{status:c.author.status,error:c.author.error,canResume:!!(c.author.pendingCreate||c.author.pendingSend)}:null,job:job||c.job||null,indexUrl:c.indexUrl||DEFAULT_INDEX};}
  if(name==='save_source'){await updateConfig(c=>({...c,indexUrl:args.url}));return {ok:true};}
  if(name==='start'){
   if(launching)throw Error('评测正在准备，请勿重复启动');launching=true;launchCancelled=false;downloadCancelled=false;
@@ -419,15 +426,14 @@ async function action(name,args={},callId){
   authorStarting=true;
   try{
   const current=(await config()).author;
+  if(current?.pendingCreate)return await createAuthor(current);
   if(current?.pendingSend)return await sendAuthor(current);
   if(current&&!['calibrated','failed'].includes(current.status))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
   await taskCapability();const draftId=args.id||'question-'+crypto.randomUUID();const revision=args.revision||'v1';
   await node('draft',{...args,id:draftId,revision},callId);
   if(typeof args.name==='string')await updateConfig(c=>({...c,draftNames:{...c.draftNames,[draftId]:args.name.slice(0,60)}}));
-  const task=await cindy.tasks.create({requestKey:'author:'+draftId+':'+revision,title:'评测工坊 · 创建题目',isolatedWorkspace:true});
-  const author={id:draftId,revision,taskId:task.taskId,status:'sending',handoff:{ready:false},pendingSend:{taskId:task.taskId,requestKey:'author-send:'+draftId+':'+revision,expectedRevision:task.revision}};
-  author.permissionPending=task.permissionMode==='plan';
-  await updateConfig(c=>({...c,author}));return await sendAuthor(author);
+  const author={id:draftId,revision,status:'creating',pendingCreate:{requestKey:'author:'+draftId+':'+revision,title:'评测工坊 · 创建题目',isolatedWorkspace:true}};
+  await updateConfig(c=>({...c,author}));return await createAuthor(author);
   }finally{authorStarting=false;}
  }
  if(name==='list_questions'){const {defaults,availableQuestions,...catalog}=await questionCatalog();return {...catalog,questions:availableQuestions};}
