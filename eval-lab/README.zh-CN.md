@@ -32,6 +32,8 @@
 
 作答、快照、诊断和草稿留在本地，Library 保存设置与导出网页。公开报告不包含原始诊断、聊天、源码或本机路径。分享只导出文件，不自动托管上线。卸载不删除 Library 或外部评测目录。
 
+校准按候选、参考答案、不完整对照分成三个有独立时限的请求，共用同一草稿身份。已完成步骤复用回执；执行结果未知的中断步骤不自动重跑。草稿变化会使校准失效。这尚不包含评分或冻结锁的崩溃恢复。
+
 ## 开发验证
 
 - `node --test test/core.test.cjs test/bridge.test.cjs test/online.test.cjs test/defaults.test.cjs test/standings.test.cjs test/execution-quality.test.cjs test/task-scope.test.cjs test/engine.test.cjs`

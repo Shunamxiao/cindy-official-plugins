@@ -147,7 +147,15 @@ async function recordBatchError(j,e){
  await saveBatch(j);
 }
 async function readyConfig(){const c=await config();if(c.root)return c;const saved=await updateConfig(c=>c.root||c.profile?c:{...c,profile:crypto.randomUUID()});if(saved.root)return saved;const r=await checked(cindy.node.request({method:'defaults',params:{profile:saved.profile},timeoutMs:30000}));return {...saved,root:r.result.root,automaticRoot:true};}
-async function node(method,args={},callId,downloadTokens){const c=await readyConfig();const r=await checked(cindy.node.request({method,params:{...args,root:c.root,bank:c.bank,importedBanks:c.importedBanks||[]},...(callId?{callId}:{}),...(downloadTokens?{downloadTokens}:{}),timeoutMs:120000,maxTotalMs:900000}));return r.result;}
+async function node(method,args={},callId,downloadTokens){
+ const c=await readyConfig();
+ const request=async(method,args)=>{const r=await checked(cindy.node.request({method,params:{...args,root:c.root,bank:c.bank,importedBanks:c.importedBanks||[]},...(callId?{callId}:{}),...(downloadTokens?{downloadTokens}:{}),timeoutMs:120000,maxTotalMs:900000}));return r.result;};
+ if(method==='calibrate'){
+  const {checkId}=await request('calibrate_begin',args);
+  for(let step=0;step<3;step++)await request('calibrate_step',{checkId,step});
+  return request('calibrate_finish',{checkId});
+ }
+ return request(method,args);}
 const DEFAULT_INDEX='https://github.com/makecindy/eval-bank/releases/download/eval-bank-20260925/index.json';
 const defaultCatalog=fetch('bank/catalog.json').then(r=>{if(!r.ok)throw Error('Default catalog unavailable');return r.json();});
 function progress(message){channel.postMessage({type:'progress',message});}

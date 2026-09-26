@@ -13,6 +13,16 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  return {calls,replies,runs,get config(){return cfg;},tool:m=>onMessage(m),ui:(id,action,args={})=>bc.onmessage({data:{type:'request',id,action,args}}),cindy};
 }
 const args={questions:['audio@v2'],configurations:[configuration]};
+test('calibration uses one bounded request per control with the same identity and call authority',async()=>{
+ const b=bridge(),requests=[];
+ b.cindy.node.request=async x=>{requests.push(x);return {ok:true,result:x.method==='calibrate_begin'?{checkId:'same-check'}:x.method==='calibrate_finish'?{checkId:'same-check',ok:true}:{}};};
+ await b.tool({type:'tool-call',tool:'calibrate_question',callId:'calibration-call',args:{id:'draft',revision:'v1'}});
+ assert.deepEqual(requests.map(x=>x.method),['calibrate_begin','calibrate_step','calibrate_step','calibrate_step','calibrate_finish']);
+ assert.deepEqual(requests.slice(1,4).map(x=>x.params.step),[0,1,2]);
+ for(const x of requests){assert.equal(x.callId,'calibration-call');assert.equal(x.maxTotalMs,900000);assert.equal(x.params.root,'/selected');}
+ for(const x of requests.slice(1))assert.equal(x.params.checkId,'same-check');
+ assert.equal(b.calls.at(-1).ok,true);
+});
 test('stop is durable before installation cancellation fails',async()=>{
  const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let entered,finish;
  const ready=new Promise(r=>entered=r),pending=new Promise(r=>finish=r);
@@ -398,7 +408,7 @@ test('author rejection ends only definitely unaccepted requests; uncertain failu
 test('failed calibration is terminal, visible, and does not run again on polling',async()=>{
  const b=bridge(),request=b.cindy.node.request;let count=0;
  await b.ui('a','author',{records:[]});b.runs.get('r1').status='completed';
- b.cindy.node.request=async x=>{if(x.method==='calibrate'){count++;throw Error('invalid draft');}return request(x);};
+ b.cindy.node.request=async x=>{if(x.method==='calibrate_begin'){count++;throw Error('invalid draft');}return request(x);};
  for(const id of ['s1','s2']){await b.ui(id,'status');assert.equal(b.replies.at(-1).result.author.status,'failed');assert.equal(b.replies.at(-1).result.author.error,'invalid draft');}
  assert.equal(count,1);await b.ui('new','author',{records:[]});assert.equal(b.replies.at(-1).ok,true);
 });
@@ -425,7 +435,7 @@ test('lost start receipt is not proof of no dispatch: stop waits for host termin
 test('failed automatic calibration leaves the same draft available to the explicit calibration tool',async()=>{
  const b=bridge({root:'/selected',author:{id:'existing-draft',revision:'v1',runId:'done',status:'running'}}),request=b.cindy.node.request;
  b.runs.set('done',{status:'completed'});let failed=true;
- b.cindy.node.request=async x=>{if(x.method==='calibrate'){if(failed)throw Error('temporary disk failure');assert.equal(x.params.id,'existing-draft');return {ok:true,result:{checkId:'retry-check',ok:true}};}return request(x);};
+ b.cindy.node.request=async x=>{if(x.method==='calibrate_begin'){if(failed)throw Error('temporary disk failure');assert.equal(x.params.id,'existing-draft');return {ok:true,result:{checkId:'retry-check'}};}if(x.method==='calibrate_step')return {ok:true,result:{}};if(x.method==='calibrate_finish')return {ok:true,result:{checkId:'retry-check',ok:true}};return request(x);};
  await b.ui('status','status');assert.equal(b.config.author.status,'failed');failed=false;
  await b.tool({type:'tool-call',tool:'calibrate_question',callId:'retry',args:{id:'existing-draft',revision:'v1'}});
  assert.equal(b.calls.at(-1).ok,true);assert.equal(b.calls.at(-1).result.checkId,'retry-check');assert.equal(b.calls.filter(x=>x.send||x.method==='draft').length,0);

@@ -32,6 +32,8 @@ Paste or explicitly select task excerpts; the plugin does not scan all history. 
 
 Answers, snapshots, diagnostics and drafts stay in local storage. Library contains settings and exported reports. Public reports omit raw diagnostics, chats, source files and local paths. Publishing a report means exporting a file; there is no automatic public hosting. Uninstalling does not delete your Library or external evaluation directory.
 
+Calibration runs the candidate, reference and incomplete control as separate bounded requests, under one draft identity. Completed step receipts are reused; an interrupted step with an unknown outcome is not automatically executed again. Draft changes invalidate the calibration. This does not yet provide crash recovery for grading or freezing locks.
+
 ## Development
 
 - `node --test test/core.test.cjs test/bridge.test.cjs test/online.test.cjs test/defaults.test.cjs test/standings.test.cjs test/execution-quality.test.cjs test/task-scope.test.cjs test/engine.test.cjs`
