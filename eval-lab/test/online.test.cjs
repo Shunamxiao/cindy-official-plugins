@@ -3,9 +3,9 @@ const {service,source,validate}=require('../node/online.cjs');const {files,withi
 test('connection failures are actionable without replacing HTTP or validation errors',async()=>{
  const https=require('node:https'),{EventEmitter}=require('node:events'),original=https.get;
  try{
-  for(const code of ['ENOTFOUND','ECONNRESET','CERT_HAS_EXPIRED']){
+  for(const code of ['ENOTFOUND','ECONNRESET','CERT_HAS_EXPIRED','UNABLE_TO_VERIFY_LEAF_SIGNATURE','ERR_TLS_CERT_ALTNAME_INVALID']){
    https.get=()=>{const r=new EventEmitter();r.setTimeout=()=>{};process.nextTick(()=>r.emit('error',Object.assign(Error('raw connection diagnostic'),{code})));return r;};
-   await assert.rejects(require('../node/online.cjs').download('https://github.com/makecindy/eval-bank/releases/download/test/index.json','unused',100),/连接失败.*网络.*重试/);
+   await assert.rejects(require('../node/online.cjs').download('https://github.com/makecindy/eval-bank/releases/download/test/index.json','unused',100),/CERT|TLS|VERIFY/.test(code)?/安全连接验证失败.*证书/:/连接失败.*网络.*重试/);
   }
  }finally{https.get=original;}
 });

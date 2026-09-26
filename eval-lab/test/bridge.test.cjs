@@ -296,6 +296,26 @@ test('failure to persist author request prevents paid dispatch',async()=>{
  const b=bridge(),library=b.cindy.library;b.cindy.library=async x=>x.op==='write'&&JSON.parse(x.content).author?{ok:false,message:'write failed'}:library(x);
  await b.ui('author','author',{records:[]});assert.equal(b.replies.at(-1).ok,false);assert.equal(b.calls.filter(x=>x.send).length,0);
 });
+test('author permission denial preserves one draft and task for later in-page approval',async()=>{
+ for(const external of [false,true]){
+ const b=bridge(),create=b.cindy.tasks.create;let grant=false;
+ b.cindy.tasks.create=async x=>{const task=await create(x);task.permissionMode='plan';return task;};
+ b.cindy.tasks.requestWriteAccess=async x=>{
+  assert.equal(x.taskId,b.config.author.taskId);assert.equal(x.mode,'auto');
+  const task=await b.cindy.tasks.get(x);if(grant){task.permissionMode='auto';task.revision=2;}
+  return {granted:grant,task};
+ };
+ await b.ui('first','author',{records:[]});assert.equal(b.replies.at(-1).ok,false);
+ const saved=JSON.parse(JSON.stringify(b.config.author));assert.ok(saved.pendingSend);
+ assert.equal(b.calls.filter(x=>x.send).length,0);
+ grant=true;if(external){const task=await b.cindy.tasks.get({taskId:saved.taskId});task.permissionMode='auto';task.revision=2;}
+ await b.ui('again','author',{records:[],id:'should-not-create'});
+ assert.equal(b.replies.at(-1).ok,true);assert.equal(b.config.author.id,saved.id);
+ assert.equal(b.calls.filter(x=>x.create).length,1);
+ assert.equal(b.calls.filter(x=>x.send)[0].send.expectedRevision,2);
+ assert.equal(b.calls.filter(x=>x.send)[0].send.requestKey,saved.pendingSend.requestKey);
+ }
+});
 test('explicit cached online key works offline without querying the default index',async()=>{
  const b=bridge(),request=b.cindy.node.request,key='online:'+ 'a'.repeat(64)+':audio@v2';
  b.cindy.node.request=async x=>{if(x.method==='bank')return {ok:true,result:{questions:[{key,distributionHash:'a'}]}};if(x.method==='online_inspect')throw Error('must not fetch');return request(x);};

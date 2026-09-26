@@ -1,4 +1,6 @@
 const english={
+'题库连接失败，请检查网络、DNS 或代理设置后重试；已有离线题库仍可使用。':'Bank connection failed. Check your network, DNS or proxy settings and retry; installed offline banks remain available.',
+'题库安全连接验证失败，请检查系统时间和代理证书，或联系题库维护者；不要关闭证书校验。':'Bank secure connection verification failed. Check your system clock and proxy certificates, or contact the bank maintainer; do not disable certificate verification.',
 '出题请求未被受理，请检查任务配置和插件权限后重新创建。':'The authoring request was not accepted. Check the task configuration and plugin permissions before creating it again.',
 '出题未完成，请查看出题任务并检查草稿；已有成绩保留。':'Authoring did not finish. Open the authoring task and check its draft; existing scores are preserved.',
 '题库索引损坏或不兼容，请检查发布源并重新获取；仍失败请联系题库维护者。':'The bank index is damaged or incompatible. Check the release source and fetch it again; contact the bank maintainer if it still fails.',

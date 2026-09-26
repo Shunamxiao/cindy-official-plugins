@@ -301,6 +301,17 @@ async function questionCatalog(){
  return {...bank,availableQuestions:[...defaults.filter(q=>!q.installedKey&&!q.unresolved),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.key||(q.key.startsWith('online:')&&q.key.endsWith(':'+d.key))))],defaults};
 }
 async function sendAuthor(a){
+ if(a.permissionPending){
+  let task=await cindy.tasks.get({taskId:a.taskId});
+  if(task.permissionMode==='plan'){
+   if(!cindy.tasks.requestWriteAccess)throw Error('请更新 Cindy 以使用页面内授权');
+   const access=await cindy.tasks.requestWriteAccess({taskId:a.taskId,mode:'auto'});
+   if(!access.granted)throw Error('出题草稿已保存。请在插件详情允许修改文件后继续出题。');
+   task=access.task;
+  }
+  a={...a,permissionPending:false,pendingSend:{...a.pendingSend,expectedRevision:task.revision}};
+  await updateConfig(c=>({...c,author:a}));
+ }
  let run;
  try{run=await cindy.tasks.send(a.pendingSend);}catch(e){
   // These host errors occur before a send receipt exists. Unknown transport
@@ -378,8 +389,8 @@ async function action(name,args={},callId){
   const d=await node('draft',{...args,id:draftId,revision},callId);
   if(typeof args.name==='string')await updateConfig(c=>({...c,draftNames:{...c.draftNames,[draftId]:args.name.slice(0,60)}}));
   const task=await cindy.tasks.create({requestKey:'author:'+draftId+':'+revision,title:'评测工坊 · 创建题目',isolatedWorkspace:true});
-  if(task.permissionMode==='plan')throw Error('出题草稿已保存。请在插件详情允许修改文件后继续出题。');
   const author={id:draftId,revision,taskId:task.taskId,status:'sending',pendingSend:{taskId:task.taskId,requestKey:'author-send:'+draftId+':'+revision,expectedRevision:task.revision,text:'仅处理 '+JSON.stringify(d.directory)+' 中用户选定的记录，按 AUTHOR_TASK.md 创建题包。完成后运行验证并报告。不运行待测模型，不把聊天私密数据放进公开候选题。'}};
+  author.permissionPending=task.permissionMode==='plan';
   await updateConfig(c=>({...c,author}));return await sendAuthor(author);
   }finally{authorStarting=false;}
  }
