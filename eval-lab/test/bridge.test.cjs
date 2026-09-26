@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=requir
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
 function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-model',name:'Model',agent:'codex',providerId:'own-account',providerName:'My account',efforts:['low','high'],defaultEffort:'low'}]}){
  let onMessage,bc,cfg=structuredClone(initial);const calls=[],replies=[],runs=new Map(),tasks=new Map();let sequence=0;
- const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(x.method==='online_inspect')result={indexId:'fixture'};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
+ const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(x.method==='online_inspect')result={indexId:'fixture'};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
  capabilities:async()=>({operations:['create','send','getRun']}),
  create:async x=>{calls.push({create:x});const task={taskId:'t'+(++sequence),revision:1,resolvedConfig:x.route,workingDir:'/isolated/'+sequence,permissionMode:'auto'};tasks.set(task.taskId,task);return task;},
  setTeamPlan:async x=>{calls.push({setTeamPlan:x});return {ok:true};},releaseWorker:async x=>{calls.push({releaseWorker:x});return {ok:true};},get:async x=>tasks.get(x.taskId),startTeam:async()=>({ok:true,teamId:'team'}),getTeam:async()=>({ok:true,leadWorking:true,workers:[]}),
@@ -13,6 +13,21 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  return {calls,replies,runs,get config(){return cfg;},tool:m=>onMessage(m),ui:(id,action,args={})=>bc.onmessage({data:{type:'request',id,action,args}}),cindy};
 }
 const args={questions:['audio@v2'],configurations:[configuration]};
+test('both stop actions cancel the registered install and wait for cleanup',async()=>{
+ for(const action of ['cancel','cancel_download']){
+  const b=bridge(),request=b.cindy.node.request;let started,finish,drain;
+  const ready=new Promise(r=>started=r),ended=new Promise(r=>finish=r),cleanup=new Promise(r=>drain=r);
+  b.cindy.node.request=async x=>{
+   if(x.method==='online_install'){assert.equal(x.params.operationId,'install-fixture');started();await ended;await cleanup;throw Error('下载已取消');}
+   if(x.method==='online_cancel'){assert.equal(x.params.operationId,'install-fixture');finish();await cleanup;return {ok:true,result:{ok:true}};}
+   return request(x);
+  };
+  const install=b.ui('install','online_install',{indexId:'fixture',question:'audio@v2'});await ready;
+  let done=false;const stop=b.ui('stop',action).then(()=>done=true);await Promise.resolve();assert.equal(done,false);
+  drain();await stop;await install;assert.equal(b.replies.find(x=>x.id==='install').ok,false);
+  assert.equal(b.calls.some(x=>x.create),false);
+ }
+});
 test('prepare tool rejects every invalid model dimension before preparing or downloading',async()=>{
  for(const key of ['model','provider','harness','effort']){
   const b=bridge();await b.tool({type:'tool-call',tool:'prepare_run',callId:'invalid',args:{question:'audio@v2',...configuration,[key]:'unknown'}});

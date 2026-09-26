@@ -151,7 +151,12 @@ async function node(method,args={},callId,downloadTokens){const c=await readyCon
 const DEFAULT_INDEX='https://github.com/makecindy/eval-bank/releases/download/eval-bank-20260925/index.json';
 const defaultCatalog=fetch('bank/catalog.json').then(r=>{if(!r.ok)throw Error('Default catalog unavailable');return r.json();});
 function progress(message){channel.postMessage({type:'progress',message});}
-let downloadCancelled=false,downloadBusy=false,activeDownload=null;
+let downloadCancelled=false,downloadBusy=false,activeDownload=null,activeInstall=null;
+async function cancelPreparation(){
+ downloadCancelled=true;
+ if(activeDownload)await cindy.downloads.cancel({id:activeDownload});
+ if(activeInstall)await node('online_cancel',{operationId:activeInstall});
+}
 async function installQuestion(args,fromLaunch=false){
  if(fromLaunch&&launchCancelled)throw Error('已停止准备。');
  if(downloadBusy)throw Error('题库正在准备，请稍候');
@@ -167,13 +172,16 @@ async function installQuestion(args,fromLaunch=false){
   downloadTokens['artifact_'+a.sha256]=r.token;
  }
  if(downloadCancelled)throw Error('下载已取消');
+ activeInstall=(await node('online_begin')).operationId;
+ if(typeof activeInstall!=='string')throw Error('Install cancellation unavailable');
+ if(downloadCancelled)throw Error('下载已取消');
  channel.postMessage({type:'download-progress',phase:'unpacking'});
- const result=await node('online_install',{...args,requireHostDownloads:true},undefined,downloadTokens);
+ const result=await node('online_install',{...args,operationId:activeInstall,requireHostDownloads:true},undefined,downloadTokens);
  if(downloadCancelled)throw Error('下载已取消');
  channel.postMessage({type:'download-progress',phase:'ready'});
  return result;
  }catch(e){channel.postMessage({type:'download-progress',phase:downloadCancelled?'cancelled':'failed'});throw e;}
- finally{downloadBusy=false;activeDownload=null;}
+ finally{try{if(activeInstall)await node('online_cancel',{operationId:activeInstall});}finally{downloadBusy=false;activeDownload=null;activeInstall=null;}}
 }
 async function resolveQuestions(wanted,fromLaunch=false){
  const c=await readyConfig(),available=(await node('bank')).questions,resolved=[];let remote;
@@ -365,14 +373,14 @@ async function action(name,args={},callId){
   j.checks=0;j.lastCheckAt=0;j.approvalAcknowledgedAt=Date.now();j.phase='coordinating';j.status='running';await saveBatch(j);return advanceBatch();
  }
  if(name==='cancel'){
-  launchCancelled=true;downloadCancelled=true;if(activeDownload)void cindy.downloads.cancel({id:activeDownload}).catch(()=>{});
+  launchCancelled=true;await cancelPreparation();
   const current=(await config()).batch;
   if(!current||!['running','stopping','needs_attention'].includes(current.status))return launching?{id:'preparation',status:'cancelled',phase:'cancelled',total:0,finished:0,items:[],message:'已停止准备。'}:jobView(current);
   const saved=await updateConfig(c=>{if(c.batch?.id!==current.id)throw Error('评测批次已变化');return {...c,batch:{...c.batch,stopRequestedAt:Date.now(),status:'stopping',phase:'stopping',message:'已收到停止请求，正在结束当前操作；不再准备后续题目。'}};});
   const job=jobView(saved.batch);channel.postMessage({type:'job-progress',job});
   if(!advancing)void advanceBatch().catch(e=>progress('停止未完成：'+e.message));return job;
  }
- if(name==='cancel_download'){downloadCancelled=true;if(activeDownload)await cindy.downloads.cancel({id:activeDownload});return {ok:true};}
+ if(name==='cancel_download'){await cancelPreparation();return {ok:true};}
  if(name==='online_install')return installQuestion(args);
  if(name==='online_inspect')return node(name,args,callId);
  if(name==='freeze')return node('freeze',args,callId);
