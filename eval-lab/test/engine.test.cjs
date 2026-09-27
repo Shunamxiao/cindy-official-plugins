@@ -76,6 +76,9 @@ test('prepare cleans partial copies and records, then retries the same run',asyn
    fs.cp=async(...args)=>{await cp(...args);if(fail==='copy')throw Error('copy interrupted');};
    fs.open=async(...args)=>{const h=await open(...args);if(fail==='record'&&String(args[0]).endsWith('/run.json')){h.writeFile=async()=>{throw Error('record interrupted');};}return h;};
    await assert.rejects(dispatch('prepare',p),/interrupted/);fs.cp=cp;fs.open=open;
+   assert.deepEqual(await dispatch('runs',{root}),[]);
+   const abandoned=path.join(root,'eval-lab-data/runs/abandoned');await fs.mkdir(abandoned,{recursive:true});
+   assert.deepEqual(await dispatch('runs',{root}),[]);
    if(external)assert.deepEqual(await fs.readdir(workspace),[]);
    const r=await dispatch('prepare',p);assert.equal(await fs.readFile(path.join(r.workspace,'a.txt'),'utf8'),'answer');
    assert.equal((await dispatch('prepare',p)).runId,r.runId);

@@ -532,3 +532,12 @@ test('author creation identity survives lost create replies and receipt persiste
   assert.equal(b.config.author.id,original);assert.deepEqual(requests[0],requests[1]);assert.equal(b.calls.filter(x=>x.create).length,1);assert.equal(b.calls.filter(x=>x.method==='draft').length,1);assert.equal(b.config.author.pendingCreate,undefined);
  }
 });
+test('author creation ends proven pre-admission rejection but retains ambiguous failures',async()=>{
+ for(const code of ['INVALID_REQUEST','ROUTE_UNAVAILABLE','PERMISSION_DENIED','HOST_NOT_READY','INTERNAL']){
+  const b=bridge(),create=b.cindy.tasks.create;let fail=true;
+  b.cindy.tasks.create=async request=>{if(fail)throw Object.assign(Error('rejected'),{code});return create(request);};
+  await b.ui('first','author',{records:[]});assert.equal(b.replies.at(-1).ok,false);const id=b.config.author.id;
+  const rejected=['INVALID_REQUEST','ROUTE_UNAVAILABLE'].includes(code);assert.equal(b.config.author.status,rejected?'failed':'creating');assert.equal(!!b.config.author.pendingCreate,!rejected);
+  fail=false;await b.ui('next','author',{records:[],id:'new-draft'});assert.equal(b.replies.at(-1).ok,true);assert.equal(b.config.author.id,rejected?'new-draft':id);
+ }
+});

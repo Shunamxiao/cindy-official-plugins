@@ -319,7 +319,16 @@ async function questionCatalog(){
  return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.installedKey))],defaults};
 }
 async function createAuthor(a){
- const task=await cindy.tasks.create(a.pendingCreate);
+ let task;
+ try{task=await cindy.tasks.create(a.pendingCreate);}catch(e){
+  // Only these Host codes prove rejection before a create receipt/session.
+  // Permission, storage and transport failures may follow acceptance: retain identity.
+  if(['INVALID_REQUEST','ROUTE_UNAVAILABLE'].includes(e.code)){
+   const failed={...a,status:'failed',error:'出题请求未被受理，请检查任务配置和插件权限后重新创建。'};delete failed.pendingCreate;
+   await updateConfig(c=>({...c,author:failed}));throw Error(failed.error);
+  }
+  throw e;
+ }
  const author={...a,taskId:task.taskId,status:'sending',handoff:{ready:false},permissionPending:task.permissionMode==='plan',pendingSend:{taskId:task.taskId,requestKey:'author-send:'+a.id+':'+a.revision,expectedRevision:task.revision}};
  delete author.pendingCreate;
  await updateConfig(c=>({...c,author}));
