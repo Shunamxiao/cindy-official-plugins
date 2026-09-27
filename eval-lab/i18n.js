@@ -1,4 +1,6 @@
 const english={
+'Python 3 无法运行，请安装 Python 3 并确保 Cindy 的 PATH 能找到 python3，重启 Cindy 后重试；尚未开始模型作答。':'Python 3 cannot run. Install Python 3, make python3 available in Cindy’s PATH, restart Cindy and retry. Model answering has not started.',
+'评测主任务目录不可用，请检查任务目录后重试；已有作答保留。':'The evaluation coordinator directory is unavailable. Check its task directory and retry; existing answers are preserved.',
 '按最近核验的题库版本显示；开始评测时检查在线更新。':'Showing the last verified bank version; starting an evaluation checks online updates.',
 '下载内容校验失败，请重新获取题库；仍失败请联系维护者。':'Downloaded content could not be verified. Fetch the bank again or contact its maintainer.',
 '题库解包超时，请检查磁盘负载或改用更快的存储后重试；已有题库和成绩保留。':'Bank extraction timed out. Check disk load or use faster storage and retry. Existing banks and results are preserved.',

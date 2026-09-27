@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),vm=requir
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
 function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-model',name:'Model',agent:'codex',providerId:'own-account',providerName:'My account',efforts:['low','high'],defaultEffort:'low'}]}){
  let onMessage,bc,cfg=structuredClone(initial);const calls=[],replies=[],runs=new Map(),tasks=new Map();let sequence=0;
- const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='author_stage')result={directory:x.params.workspace+'/author'};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(['online_inspect','online_cached'].includes(x.method))result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={path:'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
+ const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='author_stage')result={directory:x.params.workspace+'/author'};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(['online_inspect','online_cached'].includes(x.method))result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={workspace:x.params.workspace,path:x.params.workspace+'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
  capabilities:async()=>({operations:['create','send','getRun']}),
  create:async x=>{calls.push({create:x});const task={taskId:'t'+(++sequence),revision:1,resolvedConfig:x.route,workingDir:'/isolated/'+sequence,permissionMode:'auto'};tasks.set(task.taskId,task);return task;},
  setTeamPlan:async x=>{calls.push({setTeamPlan:x});return {ok:true};},releaseWorker:async x=>{calls.push({releaseWorker:x});return {ok:true};},get:async x=>tasks.get(x.taskId),startTeam:async()=>({ok:true,teamId:'team'}),getTeam:async()=>({ok:true,leadWorking:true,workers:[]}),
@@ -540,4 +540,23 @@ test('author creation ends proven pre-admission rejection but retains ambiguous 
   const rejected=['INVALID_REQUEST','ROUTE_UNAVAILABLE'].includes(code);assert.equal(b.config.author.status,rejected?'failed':'creating');assert.equal(!!b.config.author.pendingCreate,!rejected);
   fail=false;await b.ui('next','author',{records:[],id:'new-draft'});assert.equal(b.replies.at(-1).ok,true);assert.equal(b.config.author.id,rejected?'new-draft':id);
  }
+});
+
+test('preflight failure never creates the coordinator or dispatches model work',async()=>{
+ const b=bridge(),request=b.cindy.node.request;
+ b.cindy.node.request=async x=>{if(x.method==='preflight')throw Error('Python 3 unavailable');return request(x);};
+ await b.ui('start','start',args);assert.match(b.config.batch.message,/Python 3/);
+ assert.equal(b.calls.some(x=>x.create||x.send||x.setTeamPlan||x.method==='prepare'),false);
+});
+test('Host workspace is required for both coordination artifacts; legacy recovery does not register a new plan',async()=>{
+ const b=bridge();await b.ui('start','start',args);
+ for(const method of ['coordinator_plan','coordinator_state'])assert.equal(b.calls.find(x=>x.method===method).params.workspace,'/isolated/1');
+ const j=b.config.batch;j.plan={path:'/old/plan.json',prompt:'old'};j.schedulerVersion=2;
+ await b.ui('poll','query');
+ assert.equal(b.calls.filter(x=>x.create).length,1);assert.equal(b.calls.filter(x=>x.setTeamPlan).length,1);
+ assert.equal(b.calls.filter(x=>x.method==='coordinator_plan').at(-1).params.legacy,true);
+ assert.match(b.calls.filter(x=>x.send).at(-1).send.text,/isolated\/1\/plan.json/);
+ const sends=b.calls.filter(x=>x.send).length;await b.ui('poll2','query');assert.equal(b.calls.filter(x=>x.send).length,sends);
+ const bad=bridge(),get=bad.cindy.tasks.get;bad.cindy.tasks.get=async x=>({...await get(x),workingDir:undefined});
+ await bad.ui('start','start',args);assert.match(bad.config.batch.message,/主任务目录/);assert.equal(bad.calls.some(x=>x.send||x.setTeamPlan),false);
 });

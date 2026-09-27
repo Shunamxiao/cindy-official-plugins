@@ -25,13 +25,13 @@ test('host-owned empty workspace is populated once, real task receipt grades the
 test('coordinator parallel capacity and explicit concurrency are frozen in plan',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-parallel-'));
  try{
-  const a=await dispatch('coordinator_plan',{root,id:'parallel-auto',items:[]});
+  const a=await dispatch('coordinator_plan',{root,workspace:root,id:'parallel-auto',items:[]});
   assert.match(a.prompt,/填满宿主实际可用/);assert.match(a.prompt,/create_workers/);
   assert.equal(JSON.parse(await fs.readFile(a.path)).concurrency,null);
-  const b=await dispatch('coordinator_plan',{root,id:'parallel-two',items:[],concurrency:2});
+  const b=await dispatch('coordinator_plan',{root,workspace:root,id:'parallel-two',items:[],concurrency:2});
   assert.match(b.prompt,/同时最多 2 份/);
   assert.equal(JSON.parse(await fs.readFile(b.path)).concurrency,2);
-  await assert.rejects(dispatch('coordinator_plan',{root,id:'invalid',items:[],concurrency:0}),/正整数/);
+  await assert.rejects(dispatch('coordinator_plan',{root,workspace:root,id:'invalid',items:[],concurrency:0}),/正整数/);
  }finally{await fs.rm(root,{recursive:true});}
 });
 
@@ -84,4 +84,23 @@ test('prepare cleans partial copies and records, then retries the same run',asyn
    assert.equal((await dispatch('prepare',p)).runId,r.runId);
   }finally{fs.cp=cp;fs.open=open;await fs.rm(root,{recursive:true,force:true});}
  }
+});
+
+test('coordinator handoff preserves exact legacy membership and writes state inside Host workspace',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-coordinator-'));
+ try{
+  const workspace=path.join(root,'host');await fs.mkdir(workspace);
+  const old=path.join(root,'eval-lab-data/coordination/batch.json'),data={concurrency:2,items:[{runId:'already-done'},{runId:'still-pending'}]};await fs.mkdir(path.dirname(old),{recursive:true});await fs.writeFile(old,JSON.stringify(data));
+  const p={root,workspace,id:'batch',legacy:true,items:[]},plan=await dispatch('coordinator_plan',p);
+  assert.equal(path.dirname(plan.path),path.join(await fs.realpath(workspace),'eval-coordination'));
+  assert.deepEqual(JSON.parse(await fs.readFile(plan.path)),data);assert.deepEqual(await dispatch('coordinator_plan',p),plan);
+  const state=await dispatch('coordinator_state',{root,workspace,id:'batch',assignments:[],settled:['already-done']});
+  assert.equal(path.dirname(state.path),path.dirname(plan.path));assert.match(plan.prompt,new RegExp('batch-state.json'));
+  await dispatch('coordinator_state',{root,workspace,id:'batch',assignments:['still-pending']});assert.deepEqual(JSON.parse(await fs.readFile(state.path)).assignments,['still-pending']);
+  assert.deepEqual(JSON.parse(await fs.readFile(old)),data);
+  await assert.rejects(dispatch('coordinator_plan',{root,workspace,id:'batch',items:[]}),/changed/);
+  for(const method of ['coordinator_plan','coordinator_state'])await assert.rejects(dispatch(method,{root,id:'batch'}),/主任务目录/);
+  const alias=path.join(root,'alias');await fs.symlink(workspace,alias,'junction');
+  for(const method of ['coordinator_plan','coordinator_state'])await assert.rejects(dispatch(method,{root,workspace:alias,id:'batch'}),/主任务目录/);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
 });

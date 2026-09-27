@@ -63,12 +63,14 @@ async function advanceCoordinator(j){
  try{
   if(j.stopRequestedAt||j.status==='stopping')return await stopBatch(j);
   if(!cindy.tasks.startTeam||!cindy.tasks.getTeam)throw Error('请更新 Cindy 以使用主任务协调评测');
+  if(!j.plan)await node('preflight');
   if(!j.coordinator){
    j.coordinator=await cindy.tasks.create({requestKey:j.id+':coordinator',title:'评测主任务 · '+j.items.length+' 份作答',route:taskRoute(j.items[0].config),isolatedWorkspace:true});
    await saveBatch(j);
   }
   j.coordinator=await cindy.tasks.get({taskId:j.coordinator.taskId});
   if(j.coordinator.permissionMode!=='auto'){j.phase='permission';j.message='启用 Auto 自动审批后，主任务和 Worker 将按此权限继续评测。';await saveBatch(j);return jobView(j);}
+  if(!j.coordinator.workingDir)throw Error('评测主任务目录不可用，请检查任务目录后重试；已有作答保留。');
   if(!j.team){
    j.phase='coordinating';await saveBatch(j);
    const team=await cindy.tasks.startTeam({taskId:j.coordinator.taskId});
@@ -81,7 +83,12 @@ async function advanceCoordinator(j){
     if(!item.prepared){try{item.prepared=await node('prepare',{question:item.question,...item.config,batchId:j.id,runId:item.runId,executionChannel:'Orca Worker'});delete item.error;item.status='pending';}catch(e){if(isTransientReadError(e))throw e;item.status='blocked';item.error='作答准备失败：'+e.message;}await saveBatch(j);}
    }
    if(!j.items.some(x=>!doneItem(x)&&x.prepared))throw Error('没有可开始的作答，请检查题包准备错误');
-   j.plan=await node('coordinator_plan',{id:j.id,capacity:j.capacity,coordinatorUsage:j.coordinatorUsage,concurrency:j.concurrency??null,items:j.items.filter(x=>!doneItem(x)&&x.prepared).map(x=>({label:workerLabel(x.runId),runId:x.runId,config:x.config,workspace:x.prepared.workspace,prompt:x.prepared.prompt}))});
+   j.plan=await node('coordinator_plan',{id:j.id,workspace:j.coordinator.workingDir,capacity:j.capacity,coordinatorUsage:j.coordinatorUsage,concurrency:j.concurrency??null,items:j.items.filter(x=>!doneItem(x)&&x.prepared).map(x=>({label:workerLabel(x.runId),runId:x.runId,config:x.config,workspace:x.prepared.workspace,prompt:x.prepared.prompt}))});
+   await saveBatch(j);
+  }
+  if(!j.plan.workspace){
+   j.plan=await node('coordinator_plan',{id:j.id,workspace:j.coordinator.workingDir,legacy:true});
+   if(j.controlRun)j.schedulerVersion=1;
    await saveBatch(j);
   }
   if(j.registeredPlan!==2){
@@ -101,10 +108,10 @@ async function advanceCoordinator(j){
   const limit=j.concurrency??team.capacity?.hardLimit??1;
   const available=Math.max(0,Math.min(limit-activeWorkers.length,(team.capacity?.remainingSlots??1)+j.items.filter(x=>x.released&&team.workers.some(w=>w.worker_id===x.workerId)).length));
   const assignments=pending.slice(0,available).map(x=>({label:workerLabel(x.runId),runId:x.runId,config:x.config,workspace:x.prepared.workspace,prompt:x.prepared.prompt}));
-  const schedule=await node('coordinator_state',{id:j.id,assignments,active:activeWorkers.map(w=>({label:w.label,workerId:w.worker_id})),settled:j.items.filter(doneItem).map(x=>({label:workerLabel(x.runId),status:x.status})),capacity:{limit,available}});
+  const schedule=await node('coordinator_state',{id:j.id,workspace:j.coordinator.workingDir,assignments,active:activeWorkers.map(w=>({label:w.label,workerId:w.worker_id})),settled:j.items.filter(doneItem).map(x=>({label:workerLabel(x.runId),status:x.status})),capacity:{limit,available}});
   for(const item of pending)item.waitReason=available?'等待主任务派发':'等待可用 Worker 槽位';
   if(!j.controlRun){await coordinatorMessage(j,j.plan.prompt,'start');j.schedulerVersion=2;j.scheduleSignature=JSON.stringify(assignments.map(x=>x.label));}
-  else if(j.schedulerVersion!==2){if(pending.length||activeWorkers.length)await coordinatorMessage(j,'改用程序调度清单：每次创建前读取 '+JSON.stringify(schedule.path)+'，仅派发 assignments，禁止重建 active/settled。插件确认交卷和评分后自动释放槽位；保留现有作答，不自行归档或重新作答。','scheduler-v2');j.schedulerVersion=2;}
+  else if(j.schedulerVersion!==2){if(pending.length||activeWorkers.length)await coordinatorMessage(j,'协调计划位于 '+JSON.stringify(j.plan.path)+'。改用程序调度清单：每次创建前读取 '+JSON.stringify(schedule.path)+'，仅派发 assignments，禁止重建 active/settled。插件确认交卷和评分后自动释放槽位；保留现有作答，不自行归档或重新作答。','scheduler-workspace-v1');j.schedulerVersion=2;}
   else if(!team.leadWorking&&assignments.length){
    const signature=JSON.stringify(assignments.map(x=>x.label));
    if(signature!==j.scheduleSignature||Date.now()-(j.lastCheckAt||0)>120000){
