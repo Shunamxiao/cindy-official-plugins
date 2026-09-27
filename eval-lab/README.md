@@ -20,7 +20,7 @@ The coordinator and Workers use the selected accounts and can incur model charge
 
 Before model dispatch, preparation checks that `python3` runs in the plugin Node process environment. This is a runtime prerequisite check, not proof that every grader dependency is installed. Coordination plan/state files reside in the Host coordinator task directory. Existing batches copy their exact frozen plan there without changing membership or re-registering an active team plan.
 
-Before resuming model dispatch, the same Python probe runs again; stopping remains available if Python is missing. The data directory cannot change while authoring/calibration or an evaluation is active; folder selection is rechecked before saving.
+Before resuming model dispatch or grading, the same Python probe runs again. Host receipt checks and settlement of saved results do not require this probe; an unavailable interpreter leaves ungraded submissions for the existing recovery loop, without replaying model work. Lost receipts from legacy single-answer tasks are read before sending or stopping; ambiguous receipts are rejected. The data directory cannot change during authoring/calibration (including standalone draft, calibration and freeze calls), or while a failed author task retains a run to recover. Successful explicit calibration ends that hold. Folder selection is rechecked before saving.
 
 ## Questions and local execution
 

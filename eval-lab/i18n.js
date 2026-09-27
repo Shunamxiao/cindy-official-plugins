@@ -1,4 +1,6 @@
 const english={
+'Python 3 无法运行，请安装 Python 3 并确保 Cindy 的 PATH 能找到 python3，重启 Cindy 后重试；已有作答和成绩保留。':'Python 3 cannot run. Install Python 3, make python3 available in Cindy’s PATH, restart Cindy and retry. Existing answers and scores are preserved.',
+'并发上限':'Concurrency limit','协调费用 USD':'Coordinator cost USD','约':'Approx.','单列，不计入模型作答费用':'Listed separately; excluded from model answer costs',
 '出题尚未结束，请完成出题和校准后再更改数据目录。':'Authoring is still in progress. Finish authoring and calibration before changing the data directory.',
 '评测尚未结束，请完成或停止评测后再更改数据目录。':'An evaluation is still in progress. Complete or stop it before changing the data directory.',
 'Python 3 无法运行，请安装 Python 3 并确保 Cindy 的 PATH 能找到 python3，重启 Cindy 后重试；尚未开始模型作答。':'Python 3 cannot run. Install Python 3, make python3 available in Cindy’s PATH, restart Cindy and retry. Model answering has not started.',

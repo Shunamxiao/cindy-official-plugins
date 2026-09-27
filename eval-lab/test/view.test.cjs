@@ -9,6 +9,12 @@ test('real view: banks, model matrix, author calibration, history export, mobile
  await page.waitForFunction(()=>!refreshing);await page.evaluate(async()=>{__previewState.author={status:'failed',error:'invalid draft'};await refresh();});assert.match(await page.locator('#status').textContent(),/出题未完成.*invalid draft/);await page.evaluate(()=>{__previewState.author=null;});
  await page.evaluate(()=>{state.job={status:'running',phase:'permission',finished:0,total:7,message:'需要授权',items:[{question:'audio@v2',model:'Luna',effort:'high',status:'pending'}]};renderJob();});
  assert.match(await page.locator('#job-state').textContent(),/等待授权/);assert.equal(await page.locator('#allow-write').isVisible(),true);
+ for(const cost of [null,0,1.25]){
+  await page.evaluate(cost=>{uiLocale='en';state.job.capacity={hardLimit:4};state.job.coordinatorUsage={costUSD:cost,approximate:cost!==0};renderJob();},cost);
+  const usage=await page.locator('#job-usage').textContent();assert.match(usage,/Concurrency limit 4.*Coordinator cost USD/);assert.doesNotMatch(usage,/[\u3400-\u9fff]/);
+  assert.match(usage,cost===null?/Unknown/:cost===0?/\$0/:/Approx\. \$1\.25/);
+ }
+ await page.evaluate(()=>{uiLocale='zh-CN';renderJob();});
  await page.evaluate(()=>{state.job.phase='grading';renderJob();});assert.match(await page.locator('#job-state').textContent(),/独立评分/);assert.equal(await page.locator('#allow-write').isVisible(),false);
  for(const phase of ['recovering','preparing','coordinating','answering','queued','grading','reconciling','permission','awaiting_confirmation']){await page.evaluate(phase=>{state.job.status='running';state.job.phase=phase;renderJob();},phase);assert.equal(await page.locator('#job').isVisible(),false,phase);}
  await page.evaluate(()=>{state.job.phase='blocked';renderJob();});assert.equal(await page.locator('#job').isVisible(),true);assert.equal(await page.locator('#job').textContent(),'恢复评测');

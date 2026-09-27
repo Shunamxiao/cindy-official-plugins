@@ -591,3 +591,73 @@ test('data root remains bound throughout active authoring and picker races',asyn
  const done=bridge({root:'/original',author:{status:'calibrated'}});done.cindy.pick=async()=>({ok:true,path:'/new',name:'new'});
  await done.ui('root','setup_root');assert.equal(done.replies.at(-1).ok,true);assert.equal(done.config.root,'/new');
 });
+test('Python outage does not block recorded results, and ungraded workers retry without release',async()=>{
+ for(const scored of [false,true]){
+  const b=bridge();await b.ui('start','start',args);const j=b.config.batch;
+  const w=worker(b,{lastTurnEndedAt:2000,startedAt:1000,acceptedAt:500});
+  b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[w]});
+  if(scored)Object.assign(j.items[0],{status:'graded',result:{status:'graded'},workerId:w.worker_id,taskId:w.session_id});
+  const request=b.cindy.node.request;let unavailable=true;
+  b.cindy.node.request=async x=>{if(x.method==='preflight'&&unavailable)throw Error('Python 3 unavailable');return request(x);};
+  await b.ui('poll','query');
+  if(scored){assert.equal(b.config.batch.status,'completed');assert.equal(b.calls.filter(x=>x.releaseWorker).length,1);}
+  else{assert.equal(b.config.batch.phase,'recovering');assert.equal(b.calls.some(x=>x.releaseWorker||x.method==='record_failure'),false);unavailable=false;b.config.batch.retryAt=0;await b.ui('retry','query');assert.equal(b.config.batch.status,'completed');assert.equal(b.calls.filter(x=>x.method==='grade').length,1);}
+  assert.equal(b.calls.filter(x=>x.send).length,1);
+ }
+});
+test('legacy lost send receipt is read without Python or replay, including stop',async()=>{
+ for(const stop of [false,true]){
+  const b=bridge({root:'/selected',batch:{id:'legacy',status:'running',items:[{runId:'answer',question:'audio@v2',config:configuration,status:'pending',task:{taskId:'t'},prepared:{workspace:'/answer',prompt:'work'}}]}});
+  const run={runId:'accepted',taskId:'t',status:'running',acceptedConfig:{model:'test-model',agentKind:'codex',providerId:'own-account',effort:'high',fastMode:false}};
+  b.cindy.tasks.listRuns=async()=>({items:[run],nextCursor:null});b.cindy.tasks.getRun=async()=>run;
+  b.cindy.node.request=async()=>{throw Error('Python 3 unavailable');};
+  if(stop){await b.ui('stop','cancel');await b.ui('query','query');assert.equal(b.config.batch.status,'cancelled');assert.equal(b.calls.filter(x=>x.cancel).length,1);}
+  else{await b.ui('query','query');assert.equal(b.config.batch.items[0].hostRun.runId,'accepted');assert.equal(b.config.batch.items[0].status,'running');}
+  assert.equal(b.calls.some(x=>x.send),false);
+ }
+});
+test('standalone author tools fence root changes and release the existing guard on every outcome',async()=>{
+ for(const tool of ['create_question_draft','calibrate_question','freeze'])for(const fail of [false,true]){
+  const b=bridge({root:'/original'});let entered,release;const ready=new Promise(r=>entered=r),held=new Promise(r=>release=r);const request=b.cindy.node.request;
+  b.cindy.node.request=async x=>{if(['draft','calibrate_begin','freeze'].includes(x.method)){entered();await held;if(fail)throw Error('write failed');}return request(x);};
+  b.cindy.pick=async()=>({ok:true,path:'/new'});
+  const work=b.tool({type:'tool-call',tool,callId:'tool',args:{id:'draft',revision:'v1'}});await ready;
+  await b.ui('root','setup_root');assert.equal(b.replies.at(-1).ok,false);assert.equal(b.config.root,'/original');
+  release();await work;await b.ui('root2','setup_root');assert.equal(b.replies.at(-1).ok,true);
+ }
+});
+test('recoverable failed author stays bound until explicit calibration succeeds',async()=>{
+ const b=bridge({root:'/original',author:{id:'draft',revision:'v1',runId:'done',status:'failed'}});
+ b.cindy.pick=async()=>({ok:true,path:'/new'});
+ await b.ui('blocked','setup_root');assert.equal(b.replies.at(-1).ok,false);
+ await b.tool({type:'tool-call',tool:'calibrate_question',callId:'retry',args:{id:'draft',revision:'v1'}});
+ assert.equal(b.config.author.status,'calibrated');await b.ui('allowed','setup_root');assert.equal(b.config.root,'/new');
+});
+test('one ungraded worker cannot prevent releasing another already scored worker during Python outage',async()=>{
+ const b=bridge();await b.ui('start','start',{...args,configurations:[configuration,{...configuration,effort:'low'}]});
+ const j=b.config.batch,w=worker(b,{lastTurnEndedAt:2000});
+ const second=j.items[1],w2={...w,label:'eval-'+second.runId.replaceAll('-','').slice(0,27),worker_id:'w2',session_id:'s2',effort:'low',working_dir:second.prepared.workspace};
+ Object.assign(second,{status:'graded',result:{status:'graded'},workerId:'w2',taskId:'s2'});
+ b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[w,w2]});
+ const request=b.cindy.node.request;b.cindy.node.request=async x=>{if(x.method==='preflight')throw Error('Python 3 unavailable');return request(x);};
+ await b.ui('poll','query');assert.equal(b.config.batch.phase,'recovering');
+ assert.deepEqual(b.calls.filter(x=>x.releaseWorker).map(x=>x.releaseWorker.workerId),['w2']);
+ assert.equal(b.config.batch.items[0].status,'completed');assert.equal(b.calls.some(x=>x.method==='record_failure'),false);
+});
+test('pre-plan and old-plan preparation recover without freezing omitted items',async()=>{
+ for(const upgrade of [false,true]){
+  const b=bridge();await b.ui('start','start',args);const j=b.config.batch;
+  if(upgrade){j.registeredPlan=1;delete j.items[0].prepared.authorizationScope;}else{delete j.plan;delete j.items[0].prepared;}
+  const request=b.cindy.node.request;let unavailable=true;
+  b.cindy.node.request=async x=>{if(x.method==='preflight'&&unavailable)throw Error('Python 3 unavailable');return request(x);};
+  await b.ui('poll','query');assert.equal(b.config.batch.phase,'recovering');assert.notEqual(b.config.batch.items[0].status,'blocked');
+  unavailable=false;b.config.batch.retryAt=0;await b.ui('recovered','query');assert.notEqual(b.config.batch.phase,'recovering');assert.ok(b.config.batch.plan);
+ }
+});
+test('root changes distinguish terminal author failure from completed work awaiting calibration',async()=>{
+ for(const status of ['failed','cancelled','interrupted','completed','running']){
+  const b=bridge({root:'/original',author:{id:'draft',runId:'host',status:'failed'}});
+  b.cindy.tasks.getRun=async()=>({status});b.cindy.pick=async()=>({ok:true,path:'/new'});
+  await b.ui('root','setup_root');assert.equal(b.replies.at(-1).ok,['failed','cancelled','interrupted'].includes(status));
+ }
+});
