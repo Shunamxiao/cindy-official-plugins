@@ -3,7 +3,7 @@ const engine=path.resolve(__dirname,'../node/engine.cjs');
 test('missing Python rejects preflight and preparation before creating answer files',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-python-'));
  try{
-  const result=cp.spawnSync(process.execPath,['-e',`const {dispatch}=require(${JSON.stringify(engine)});(async()=>{for(const method of ['preflight','prepare']){try{await dispatch(method,{root:${JSON.stringify(root)}});process.exitCode=1;}catch(e){if(!e.message.includes('Python 3'))throw e;}}})().catch(()=>process.exitCode=2);`],{env:{...process.env,PATH:root},encoding:'utf8'});
+  const result=cp.spawnSync(process.execPath,['-e',"const {dispatch}=require(process.argv[1]);(async()=>{for(const method of ['preflight','prepare']){try{await dispatch(method,{root:process.argv[2]});process.exitCode=1;}catch(e){if(!e.message.includes('Python 3'))throw e;}}})().catch(()=>process.exitCode=2);",engine,root],{env:{...process.env,PATH:root},encoding:'utf8'});
   assert.equal(result.status,0,result.stderr);assert.deepEqual(await fs.readdir(root),[]);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });

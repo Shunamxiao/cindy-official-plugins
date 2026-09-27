@@ -560,3 +560,34 @@ test('Host workspace is required for both coordination artifacts; legacy recover
  const bad=bridge(),get=bad.cindy.tasks.get;bad.cindy.tasks.get=async x=>({...await get(x),workingDir:undefined});
  await bad.ui('start','start',args);assert.match(bad.config.batch.message,/主任务目录/);assert.equal(bad.calls.some(x=>x.send||x.setTeamPlan),false);
 });
+
+test('resumed frozen coordination checks Python before sending more model work',async()=>{
+ for(const leadWorking of [false,true]){
+ const b=bridge();await b.ui('start','start',args);
+ const states=b.calls.filter(x=>x.method==='coordinator_state').length;
+ const sends=b.calls.filter(x=>x.send).length,request=b.cindy.node.request;
+ b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking,workers:[],capacity:{remainingSlots:1,hardLimit:1}});
+ b.cindy.node.request=async x=>{if(x.method==='preflight')throw Error('Python 3 unavailable');return request(x);};
+ await b.ui('resume','query');assert.match(b.config.batch.message,/Python 3/);
+ assert.equal(b.calls.filter(x=>x.send).length,sends);
+ assert.equal(b.calls.filter(x=>x.method==='coordinator_state').length,states);
+ // Stopping must remain available when the evaluator is unavailable.
+ await b.ui('stop','cancel');await b.ui('stopping','query');assert.equal(b.calls.filter(x=>x.send).length,sends+1);
+ assert.match(b.calls.filter(x=>x.send).at(-1).send.requestKey,/:stop$/);
+ }
+});
+test('data root remains bound throughout active authoring and picker races',async()=>{
+ for(const status of ['creating','sending','queued','running','completed']){
+  const b=bridge({root:'/original',author:{id:'draft',status}});let picks=0;
+  b.cindy.pick=async()=>{picks++;return {ok:true,path:'/new',name:'new'};};
+  await b.ui('root','setup_root');assert.equal(b.replies.at(-1).ok,false);assert.match(b.replies.at(-1).message,/出题尚未结束/);
+  assert.equal(b.config.root,'/original');assert.equal(picks,0);
+ }
+ const b=bridge({root:'/original'});let select;
+ b.cindy.pick=()=>new Promise(resolve=>{select=resolve;});
+ const picking=b.ui('root','setup_root');while(!select)await new Promise(resolve=>setImmediate(resolve));
+ await b.ui('author','author',{records:[]});select({ok:true,path:'/new',name:'new'});await picking;
+ assert.equal(b.replies.find(x=>x.id==='root').ok,false);assert.equal(b.config.root,'/original');
+ const done=bridge({root:'/original',author:{status:'calibrated'}});done.cindy.pick=async()=>({ok:true,path:'/new',name:'new'});
+ await done.ui('root','setup_root');assert.equal(done.replies.at(-1).ok,true);assert.equal(done.config.root,'/new');
+});

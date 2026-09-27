@@ -20,6 +20,8 @@ The coordinator and Workers use the selected accounts and can incur model charge
 
 Before model dispatch, preparation checks that `python3` runs in the plugin Node process environment. This is a runtime prerequisite check, not proof that every grader dependency is installed. Coordination plan/state files reside in the Host coordinator task directory. Existing batches copy their exact frozen plan there without changing membership or re-registering an active team plan.
 
+Before resuming model dispatch, the same Python probe runs again; stopping remains available if Python is missing. The data directory cannot change while authoring/calibration or an evaluation is active; folder selection is rechecked before saving.
+
 ## Questions and local execution
 
 Default source: [makecindy/eval-bank](https://github.com/makecindy/eval-bank), pinned [Release](https://github.com/makecindy/eval-bank/releases/tag/eval-bank-20260925). Seven question families cover audio, Agent Island, automatic recovery, composer sending, mobile history order, remote files and projection caches. Each question is worth one point according to its frozen assessment weights. Incomplete coverage and environment-invalid results are shown separately.
