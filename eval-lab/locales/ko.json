@@ -7,7 +7,7 @@
       "description": "List default questions, imported banks and frozen personal questions without starting a model."
     },
     "prepare_run": {
-      "description": "Prepare an isolated answer workspace for a verified model configuration without starting a model. Default questions are downloaded and verified when needed; installed version-qualified keys can be prepared offline."
+      "description": "Prepare an isolated answer workspace for a verified model configuration without starting a model. Default questions are downloaded and verified when needed; installed version-qualified keys can be prepared offline. Returns runId, workspace, the answering prompt, authorizationScope and question-version metadata; pass the returned directory and instructions to the executor to continue answering. Preparation itself does not run a model."
     },
     "list_runs": {
       "description": "Read local execution states and independently graded results."

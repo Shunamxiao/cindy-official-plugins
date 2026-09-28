@@ -94,6 +94,6 @@ test('unsupported platforms can browse but reject planning and installation befo
 test('all dynamic evaluation phases have English fallback text',async()=>{
  const view=await fs.readFile(path.join(__dirname,'../view.js'),'utf8'),code=await fs.readFile(path.join(__dirname,'../i18n.js'),'utf8');
  const labels=vm.runInNewContext('('+view.match(/,labels=(\{[^\n]+?\});/)[1]+')');
- const english=vm.runInNewContext(code.slice(0,code.indexOf('let uiLocale'))+';english');
- for(const text of Object.values(labels)){assert.ok(english[text],text);assert.doesNotMatch(english[text],/[\u3400-\u9fff]/);}
+ const {translate}=require('../i18n.js');
+ for(const text of Object.values(labels)){assert.notEqual(translate('en',text),text);assert.doesNotMatch(translate('en',text),/[\u3400-\u9fff]/);}
 });

@@ -181,6 +181,7 @@ async function recoverLegacyRun(j,item){
 async function readyConfig(){const c=await config();if(c.root)return c;const saved=await updateConfig(c=>c.root||c.profile?c:{...c,profile:crypto.randomUUID()});if(saved.root)return saved;const r=await checked(cindy.node.request({method:'defaults',params:{profile:saved.profile},timeoutMs:30000}));return {...saved,root:r.result.root,automaticRoot:true};}
 async function node(method,args={},callId,downloadTokens){
  const c=await readyConfig();
+ if(method==='export'){let locale='en';try{const context=await cindy.request({kind:'app-context'});if(context?.context?.locale==='zh-CN')locale='zh-CN';}catch{}args={...args,locale};}
  const request=async(method,args)=>{const r=await checked(cindy.node.request({method,params:{...args,root:c.root,bank:c.bank,importedBanks:c.importedBanks||[]},...(callId?{callId}:{}),...(downloadTokens?{downloadTokens}:{}),timeoutMs:120000,maxTotalMs:900000}));return r.result;};
  if(method==='calibrate'){
   const {checkId}=await request('calibrate_begin',args);

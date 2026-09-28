@@ -54,3 +54,5 @@ Damaged online banks are rebuilt and verified before replacement. The old bank i
 Browser tests use a Host bridge fixture. They do not prove stable/Beta device compatibility, real-provider execution or complete restart/account-switch behavior. Repository CI produces a `.cindy` verification artifact; package/install/device evidence must be recorded before release. No bundled third-party Node dependencies are added; question/runtime licences travel with the bank.
 
 Each question allows up to **8 GiB of unique downloaded archives** and **32 GiB of cumulative extracted layers**. Repeated mounts count again toward extraction; old banks and backups occupy additional disk space.
+
+Batch progress and exported reports follow Cindy's language: Simplified Chinese or English fallback. Question titles, model names and external diagnostic details remain unchanged; shared reports still exclude raw diagnostics. `prepare_run` returns the answer workspace, prompt, authorization scope and version metadata; it does not run the model.

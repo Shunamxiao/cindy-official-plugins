@@ -690,3 +690,13 @@ test('both calibration entrypoints retain failed reports and protect root until 
   await b.ui('allowed','setup_root');assert.equal(b.config.root,'/new');
  }
 });
+test('page and tool exports use Host locale with safe English fallback',async()=>{
+ for(const locale of ['zh-CN','en','ja',null])for(const entry of ['page','tool']){
+  const b=bridge();b.cindy.request=async request=>{assert.equal(request.kind,'app-context');if(locale===null)throw Error('unavailable');return {context:{locale}};};
+  b.cindy.library=async()=>({ok:true,content:JSON.stringify({root:'/selected'})});
+  const request=b.cindy.node.request;b.cindy.node.request=async x=>x.method==='export'?(b.calls.push(x),{ok:true,result:{html:'report',name:'report.html'}}):request(x);
+  if(entry==='page')await b.ui('export','export',{runIds:['r'],locale:'untrusted'});
+  else await b.tool({type:'tool-call',tool:'export_report',callId:'export',args:{runIds:['r'],locale:'untrusted'}});
+  assert.equal(b.calls.find(x=>x.method==='export').params.locale,locale==='zh-CN'?'zh-CN':'en');
+ }
+});

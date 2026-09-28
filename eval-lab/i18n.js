@@ -85,9 +85,91 @@ Object.assign(english,{
  '校准准备尚未确认，请稍后重试；不要重复执行评分。':'Calibration preparation is not confirmed. Retry later; do not repeat an unknown grading attempt.',
  '同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。':'Multiple calibration records match this draft. Check their execution state first; grading will not be repeated.'
 });
-let uiLocale='zh-CN';window.evalTranslate=t=>uiLocale==='zh-CN'?t:(english[t]||t);
-(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const e of document.querySelectorAll('[placeholder]'))e.placeholder=window.evalTranslate(e.placeholder);})();
+
 
 Object.assign(english,{"正在读取已连接的模型…": "Loading connected models…", "暂无可用模型，请先在 Cindy 中连接模型来源。": "No models available. Connect a model provider in Cindy.", "已显示当前已连接的模型和强度，读取不产生模型费用。": "Connected models and efforts. Loading the catalog does not use model tokens.", "当前 Cindy 版本不支持模型目录，请升级后重试。": "This Cindy version does not support the model catalog. Please update.", "模型目录暂时不可用，请刷新重试。": "Model catalog unavailable. Please refresh to retry."});
 
 Object.assign(english,{"刷新进度":"Refresh progress","停止评测":"Stop evaluation","正在评测":"Evaluating","已结束":"Finished","已停止":"Stopped","逐份运行并独立评分。离开页面后当前任务继续执行，返回页面后继续下一份。":"Runs are graded individually. The active task continues when you leave; return to advance the next run."});
+
+Object.assign(english,{
+ "等待中": "Waiting",
+ "时间未知": "Time unknown",
+ "评测进行中": "Evaluation in progress",
+ "题目准备中": "Preparing question",
+ "环境未满足要求，详细诊断保留在本地。": "Environment requirements were not met. Detailed diagnostics remain local.",
+ "本次未完成，详细诊断保留在本地。": "This run did not finish. Detailed diagnostics remain local.",
+ "同一作答出现多个 Worker，需主任务核对，不自动计分": "Multiple Workers match one answer. The coordinator must check; no score is assigned automatically.",
+ "Worker 实际配置或目录不匹配，未计分": "Worker configuration or directory does not match; unscored.",
+ "Worker 异常结束，保留作答，未计分": "Worker ended unexpectedly. The answer is preserved and unscored.",
+ "等待自动审批或用户确认": "Waiting for automatic review or user confirmation",
+ "队列已暂停": "Queue paused",
+ "宿主排队中": "Queued by host",
+ "等待终态核对": "Waiting for final status verification",
+ "主任务的工具授权未完成或已拒绝，自动催办已暂停。请打开评测主任务处理授权，再继续协调；已有成绩保留。": "Coordinator tool permission is pending or denied. Automatic follow-up is paused. Open the coordinator task to handle permission, then continue; saved results are retained.",
+ "派发尚未确认，已暂停自动催办；现有作答保留。": "Dispatch is not confirmed. Automatic follow-up is paused; existing answers are preserved.",
+ "本批已结束；环境受阻的作答不计入正式总分。": "This batch has ended. Environment-blocked answers are excluded from the official total.",
+ "部分作答受阻，已有成绩已保存。": "Some answers are blocked. Existing results are saved.",
+ "主任务按调度清单并行派发，交卷后独立评分并释放槽位。": "The coordinator dispatches answers in parallel from the plan. Submitted answers are graded independently and release their slots.",
+ "进度读取暂时冲突，正在自动恢复；已有作答和成绩保留。": "Progress retrieval conflicted. Recovering automatically; existing answers and results are preserved.",
+ "等待任务停止回执；已完成成绩保留。": "Waiting for task stop confirmation; completed results are preserved.",
+ "评测已停止，已完成成绩保留。": "Evaluation stopped; completed results are preserved.",
+ "已停止准备，没有派发新的作答。": "Preparation stopped. No new answers were dispatched.",
+ "正在停止评测，已完成的作答和成绩保留。": "Stopping evaluation; completed answers and results are preserved.",
+ "已停止派发，已交卷作答的评分尚未完成；文件保留，请处理评分错误后重试。": "Dispatch stopped. Submitted answers still need grading. Files are preserved; address the grading error and retry.",
+ "等待主任务停止回执；未确认前不会开始新批次。": "Waiting for coordinator stop confirmation. A new batch cannot start until confirmed.",
+ "正在自动恢复进度核对，已有作答和成绩保留。": "Recovering progress verification automatically; existing answers and results are preserved.",
+ "需要允许 AI 修改作答文件。确认后继续这一批，无需重新开始。": "Allow AI to modify answer files. After confirmation, continue this batch without restarting.",
+ "任务结束但未完成交卷，未计分": "Task ended without submission; unscored.",
+ "宿主正在核对执行结果；不会重复发送，也不会计为零分。": "The host is verifying execution. The request will not be repeated or scored as zero.",
+ "作答准备失败：": "Answer preparation failed: ",
+ "评分受阻：": "Grading blocked: ",
+ "诊断复核暂未完成：": "Diagnostic verification is incomplete: ",
+ "{count} 份同时作答": "{count} concurrent answers",
+ "未生成总分（缺题、无效结果或重复样本）": "No total (missing questions, invalid results or duplicate samples)",
+ "宿主估算": "Host estimate",
+ "评测成绩": "Evaluation results",
+ "模型 / 框架 / 强度": "Model / Harness / Effort",
+ "每题 1 分，按冻结考核点完成度计分。不同版本分开比较；未知费用不记为零。作答耗时按宿主首个模型活动至终态的观测区间统计，不代表纯计算时间。结果来自本地评测，非第三方认证。": "Each question is worth one point, based on frozen assessment criteria. Versions are compared separately; unknown costs are not zero. Answer duration is the host-observed interval from first model activity to completion, not pure compute time. Results are local evaluations, not third-party certification.",
+ "报告不包含原始任务记录、源码、文件路径或账号标识。": "Reports exclude raw task records, source code, file paths and account identifiers.",
+ "每题 1 分": "One point per question",
+ "每题先取有效作答平均分，再合计。": "Valid answers are averaged per question, then summed.",
+ "环境失败不计分；不同题目版本不混算。未测齐的配置单独排列。": "Environment failures are unscored. Question versions are kept separate. Incomplete configurations rank separately.",
+ "模型 / 强度": "Model / Effort",
+ "总成绩": "Total score",
+ "已测题数": "Questions graded",
+ "已得分 · 待补测": "Points earned · Incomplete",
+ "各题成绩": "Results per question",
+ "（最近一次环境受阻）": " (latest attempt blocked)",
+ "费用为纳入统计作答的累计已知美元金额；任一费用缺失则显示未知，不记零。结果来自本地评测，非第三方认证。报告不包含聊天、源码、文件路径或账号凭证。": "Costs sum the included answers in USD. If any cost is missing, the total is unknown, not zero. Results are local evaluations, not third-party certification. Reports exclude chats, source code, file paths and account credentials."
+});
+Object.assign(english,{
+ "启用 Auto 自动审批后，主任务和 Worker 将按此权限继续评测。": "After Auto approval is enabled, the coordinator and Workers will continue with that permission.",
+ "评测主任务正在等待你的确认。请在侧栏打开评测主任务处理确认；插件不会代替你批准或自动催办。": "The coordinator is waiting for your confirmation. Open it in the sidebar; this plugin will not approve or follow up automatically.",
+ "已收到停止请求，正在结束当前操作；不再准备后续题目。": "Stop requested. Finishing the current operation; no further questions will be prepared.",
+ "执行归属校验失败(目标 identity 不一致)": "Execution ownership verification failed (target identity mismatch)",
+ "正在准备题目": "Preparing question",
+ "正在准备评测": "Preparing evaluation",
+ "已停止评测": "Evaluation stopped",
+ "音频重采样": "Audio resampling",
+ "灵动岛交互": "Island interaction",
+ "自动恢复": "Automatic recovery",
+ "输入框发送": "Composer submission",
+ "手机消息顺序": "Mobile message ordering",
+ "远程文件": "Remote files",
+ "消息缓存": "Message cache"
+});
+Object.assign(english,{'启用 Auto 并继续':'Enable Auto and continue','允许修改并继续':'Allow file changes and continue'});
+function translate(locale,text,params={}){
+ if(typeof text!=='string')return text;
+ let result=text;
+ if(locale!=='zh-CN'){
+  result=english[text]||text;
+  if(result===text)for(const prefix of ['作答准备失败：','评分受阻：','诊断复核暂未完成：'])if(text.startsWith(prefix)){result=english[prefix]+text.slice(prefix.length);break;}
+ }
+ return result.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(params,key)?String(params[key]):match);
+}
+if(typeof module==='object')module.exports={translate};
+if(typeof window!=='undefined'){
+ let uiLocale='en';window.evalTranslate=(text,params)=>translate(uiLocale,text,params);
+ window.evalLocaleReady=(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const e of document.querySelectorAll('[placeholder]'))e.placeholder=window.evalTranslate(e.placeholder);})();
+}
