@@ -494,7 +494,11 @@ async function action(name,args={},callId){
   if(current&&!['drafting','calibrated','failed'].includes(current.status))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
   await taskCapability();const resuming=current?.status==='drafting',draftId=resuming?current.id:args.id||'question-'+crypto.randomUUID();const revision=resuming?current.revision:args.revision||'v1';
   if(!resuming)await updateConfig(c=>({...c,author:{id:draftId,revision,status:'drafting'}}));
-  await node('draft',{...args,id:draftId,revision,resume:resuming},callId);
+  const drafted=await node('draft',{...args,id:draftId,revision,resume:resuming},callId);
+  if(drafted.status==='input_required'){
+   const error='草稿材料缺失或不完整，请重新选择材料创建题目；原文件保留，尚未派发出题任务。';
+   await updateConfig(c=>({...c,author:{id:draftId,revision,status:'failed',error}}));throw Error(error);
+  }
   if(typeof args.name==='string')await updateConfig(c=>({...c,draftNames:{...c.draftNames,[draftId]:args.name.slice(0,60)}}));
   const author={id:draftId,revision,status:'creating',pendingCreate:{requestKey:'author:'+draftId+':'+revision,title:'评测工坊 · 创建题目',isolatedWorkspace:true}};
   await updateConfig(c=>({...c,author}));return await createAuthor(author);

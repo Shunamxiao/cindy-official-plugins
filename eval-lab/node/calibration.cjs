@@ -3,6 +3,14 @@ const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('n
 const names=['candidate','reference','controls/incomplete'];
 const publicStep=({name,status,scoreExact})=>({name,status,scoreExact});
 module.exports=function calibration({base,within,files,read,write,id,validateSpec,score,runCommand,draftDirectory=async p=>within(await base(p.root),'drafts/'+id(p.id)+'/'+id(p.revision))}){
+ function receipt(result,name,spec){
+  if(result?.name!==name||typeof result.execution?.timedOut!=='boolean'||!(result.execution.code===null||Number.isInteger(result.execution.code))||!['graded','environment_invalid'].includes(result.status)||result.raw?.status!==result.status)throw Error('Calibration receipt mismatch');
+  if(result.status==='graded'){
+   const calculated=score(spec,result.raw.items);
+   if(result.execution.code!==0||result.execution.timedOut||result.score!==calculated.value||result.scoreExact!==calculated.exact)throw Error('Calibration receipt mismatch');
+  }else if(result.score!==null||result.scoreExact!==null)throw Error('Calibration receipt mismatch');
+  return result;
+ }
  async function begin(p){
   const home=await base(p.root),dir=await draftDirectory(p);
   const spec=await read(path.join(dir,'question.json'));validateSpec(spec);
@@ -53,10 +61,24 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
  async function step(p){
   if(!Number.isInteger(p.step)||p.step<0||p.step>=names.length)throw Error('Invalid calibration step');
   const {checks,dir,spec}=await context(p),name=names[p.step],resultPath=path.join(checks,'step-'+p.step+'.json');
-  try{return publicStep(await read(resultPath));}catch(e){if(e.code!=='ENOENT')throw e;}
+  try{return publicStep(receipt(await read(resultPath),name,spec));}catch(e){if(e.code!=='ENOENT')throw e;}
   // A durable attempt marker prevents replay of an unknown or still-running process.
   // Completed receipts are reusable; unknown attempts are never replayed.
-  const attempt=path.join(checks,'attempt-'+p.step);await fs.mkdir(attempt);
+  const attempt=path.join(checks,'attempt-'+p.step);
+  try{await fs.mkdir(attempt);}catch(e){
+   if(e.code!=='EEXIST')throw e;
+   let result;
+   try{result=await read(path.join(attempt,'receipt.json'));}catch(error){
+    if(error.code==='ENOENT'){
+     try{return publicStep(receipt(await read(resultPath),name,spec));}catch(missing){if(missing.code!=='ENOENT')throw missing;}
+     throw Object.assign(Error('Calibration execution is unknown; existing files preserved, no replay.'),{code:'EEXIST'});
+    }
+    throw error;
+   }
+   receipt(result,name,spec);
+   try{await fs.link(path.join(attempt,'receipt.json'),resultPath);}catch(error){if(error.code!=='EEXIST')throw error;if(JSON.stringify(await read(resultPath))!==JSON.stringify(result))throw Error('Calibration receipt conflict');}
+   return publicStep(result);
+  }
   const source=path.join(attempt,'source'),output=path.join(attempt,'grade.json');
   await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});
   const execution=await runCommand('python3',['-B',path.join(dir,'author/grade.py'),source,output]);
@@ -67,8 +89,8 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   return publicStep(result);
  }
  async function finish(p){
-  const {checks,plan}=await context(p),results=[];
-  for(let i=0;i<names.length;i++){const r=await read(path.join(checks,'step-'+i+'.json'));if(r.name!==names[i])throw Error('Calibration receipt mismatch');results.push(r);}
+  const {checks,plan,spec}=await context(p),results=[];
+  for(let i=0;i<names.length;i++)results.push(receipt(await read(path.join(checks,'step-'+i+'.json')),names[i],spec));
   const ok=results.every(x=>x.status==='graded')&&results[1].score===1&&results[0].score<1&&results[2].score<1;
   const cal={...plan,ok,results},dest=path.join(checks,'calibration.json');
   const tmp=path.join(checks,'finish-'+crypto.randomUUID()+'.tmp');

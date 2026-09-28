@@ -76,12 +76,14 @@ async function draft(p){
  const home=await base(p.root);id(p.id);id(p.revision);
  const dir=await within(home,'drafts/'+p.id+'/'+p.revision);await fs.mkdir(dir,{recursive:true});
  const source=await within(dir,'sources.private.json');
- const records=p.records===undefined&&p.resume?await read(source):p.records;
- if(!Array.isArray(records)||!records.length)throw Error('Selected session excerpts required');
+ let records;
+ try{records=p.records===undefined&&p.resume?await read(source):p.records;}catch(e){if(e.code==='ENOENT'||e instanceof SyntaxError)return {status:'input_required'};throw e;}
+ if(!Array.isArray(records)||!records.length||records.some(r=>!r||typeof r.text!=='string'||!r.text.trim()||!r.sessionId||r.text.length>60000))return {status:'input_required'};
  const normalized=records.map(r=>{if(typeof r.text!=='string'||!r.text.trim()||!r.sessionId)throw Error('Source records need sessionId and text');if(r.text.length>60000)throw Error('单段记录超过60000字符，请缩小选择范围');return {sessionId:String(r.sessionId),text:r.text};});
  try{await write(source,normalized);}catch(e){
   if(e.code!=='EEXIST')throw e;
-  if(JSON.stringify(await read(source))!==JSON.stringify(normalized))throw Error('Draft source conflict; existing records preserved');
+  let old;try{old=await read(source);}catch(error){if(error instanceof SyntaxError)return {status:'input_required'};throw error;}
+  if(JSON.stringify(old)!==JSON.stringify(normalized))throw Error('Draft source conflict; existing records preserved');
  }
  const task=await fs.readFile(path.join(__dirname,'../manual/workflows/author-prompt.md'),'utf8'),prompt=await within(dir,'AUTHOR_TASK.md');
  try{await fs.writeFile(prompt,task,{flag:'wx'});}catch(e){

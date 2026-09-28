@@ -1,4 +1,5 @@
 const english={
+'草稿材料缺失或不完整，请重新选择材料创建题目；原文件保留，尚未派发出题任务。':'Draft materials are missing or incomplete. Select materials to create a new question. Original files are preserved; no authoring task has been dispatched.',
 '校准未通过，请检查校准报告并修正草稿后重试。':'Calibration failed. Check its report, correct the draft and retry.',
 '此题库需要 Apple 芯片的 macOS，请在支持的设备上安装和运行，或导入兼容当前平台的题库。':'This bank requires macOS on Apple silicon. Install and run it on a supported device, or import a bank compatible with this platform.',
 '正在自动恢复':'Recovering automatically','等待主任务确认':'Waiting for coordinator confirmation','正在停止评测':'Stopping evaluation','主任务正在协调':'Coordinator is organizing the evaluation','等待授权':'Waiting for permission','正在准备作答目录':'Preparing answer directories','等待模型开始':'Waiting for the model to start','模型正在作答':'Model is answering','正在独立评分':'Grading independently','正在核对执行状态':'Checking execution status','评测暂停，需要处理':'Evaluation paused; action required',

@@ -1,5 +1,20 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch}=require('../node/engine.cjs');
+test('completed unpublished calibration receipt recovers without executing the grader again',()=>fixture(async(root)=>{
+ const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
+ const result=await dispatch('calibrate_step',p),folder=path.join(root,'eval-lab-data/calibrations',checkId);
+ await fs.rename(path.join(folder,'step-0.json'),path.join(folder,'attempt-0/receipt.json'));
+ await fs.unlink(path.join(folder,'attempt-0/source/answer'));
+ assert.deepEqual(await Promise.all([dispatch('calibrate_step',p),dispatch('calibrate_step',p)]),[result,result]);
+ assert.deepEqual(await dispatch('calibrate_step',p),result);
+}));
+test('malformed completed receipts are preserved but never published or replayed',()=>fixture(async(root)=>{
+ const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
+ await dispatch('calibrate_step',p);const folder=path.join(root,'eval-lab-data/calibrations',checkId),published=path.join(folder,'step-0.json'),pending=path.join(folder,'attempt-0/receipt.json');
+ const result=JSON.parse(await fs.readFile(published,'utf8'));result.score=1;await fs.writeFile(pending,JSON.stringify(result));await fs.unlink(published);
+ await assert.rejects(dispatch('calibrate_step',p),/receipt mismatch/);await assert.rejects(fs.access(published));
+ assert.equal(await fs.readFile(pending,'utf8'),JSON.stringify(result));
+}));
 async function fixture(fn){const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-calibration-'));try{
  const {directory}=await dispatch('draft',{root,id:'sample',revision:'v1',records:[{sessionId:'synthetic',text:'Fixture'}]});
  for(const name of ['candidate','reference','controls/incomplete','author'])await fs.mkdir(path.join(directory,name),{recursive:true});

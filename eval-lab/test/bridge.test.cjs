@@ -1,5 +1,13 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),crypto=require('node:crypto');
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
+test('known missing draft input releases authoring without creating a task or replaying the old identity',async()=>{
+ const b=bridge({root:'/selected',author:{id:'broken',revision:'v1',status:'drafting'}}),request=b.cindy.node.request;
+ b.cindy.node.request=async x=>x.method==='draft'&&x.params.id==='broken'?{ok:true,result:{status:'input_required'}}:request(x);
+ await b.ui('resume','author');assert.equal(b.replies.find(x=>x.id==='resume').ok,false);
+ assert.equal(b.config.author.status,'failed');assert.equal(b.calls.some(x=>x.create),false);
+ await b.ui('new','author',{records:[]});assert.equal(b.replies.find(x=>x.id==='new').ok,true);
+ assert.notEqual(b.config.author.id,'broken');
+});
 test('download cancellation failure still reaches the registered installer',async()=>{
  const b=bridge(),request=b.cindy.node.request;let enter,release,cancelled=0;
  const ready=new Promise(r=>enter=r),pending=new Promise(r=>release=r);

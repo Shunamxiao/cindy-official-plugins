@@ -1,5 +1,16 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');const {dispatch}=require('../node/engine.cjs');
 const realBankOptions={skip:process.env.EVAL_TEST_BANK?false:'Set EVAL_TEST_BANK to run public-bank integration tests'};
+test('missing or truncated author materials return a recoverable input result without touching evidence',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-draft-input-'));
+ try{
+  const p={root,id:'broken',revision:'v1',resume:true};
+  assert.equal((await dispatch('draft',p)).status,'input_required');
+  const source=path.join(root,'eval-lab-data/drafts/broken/v1/sources.private.json');await fs.writeFile(source,'{partial');
+  assert.equal((await dispatch('draft',p)).status,'input_required');
+  assert.equal(await fs.readFile(source,'utf8'),'{partial');
+  assert.equal((await dispatch('draft',{...p,id:'replacement',records:[{sessionId:'fixture',text:'replacement'}]})).status,'draft');
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('draft retry repairs missing prompt and never replaces different source records',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-draft-retry-'));
  try{
