@@ -18,6 +18,22 @@ test('question budgets accept exact boundaries and reject one byte over',()=>{
  index.artifacts[name].bytes++;assert.throws(()=>validate(index,url));index.artifacts[name].bytes--;
  index.artifacts[name].expandedBytes++;assert.throws(()=>validate(index,url));
 });
+test('artifact references must name a validated own entry, including cached indices',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-index-shape-')),id='c'.repeat(64);
+ try{
+  const dir=path.join(root,'online/indices',id);await fs.mkdir(dir,{recursive:true});
+  for(const artifact of ['toString','constructor','__proto__','missing',null,[]]){
+   const index=fixture();index.questions[0].layers[0].artifact=artifact;
+   assert.throws(()=>validate(index,url),/索引损坏/);
+   const text=JSON.stringify(index);await fs.writeFile(path.join(dir,'index.json'),JSON.stringify({url,index}));
+   const svc=service({base:async()=>root,within,platform:'darwin',arch:'arm64',fetchFile:async(u,d)=>{await fs.writeFile(d,text);return {sha256:id};}});
+   await assert.rejects(svc.inspect({root,url}),/索引损坏/);
+   await assert.rejects(svc.plan({root,indexId:id,question:'fixture@v1'}),/索引损坏/);
+   await assert.rejects(svc.install({root,indexId:id,question:'fixture@v1'}));
+   assert.deepEqual(await svc.cached({root,url}),{questions:[]});
+  }
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('downloads deduplicate archives; repeated mounts still count their expansion; budgets are per question',()=>{
  const index=fixture(8*GiB,16*GiB),q=index.questions[0];
  q.layers.push({...q.layers[0],mount:'runtime'});

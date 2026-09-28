@@ -23,8 +23,9 @@ async function download(url,dest,limit,expected){source(url);const stream=await 
 async function fileHash(p,signal){const h=crypto.createHash('sha256');for await(const c of createReadStream(p,{signal}))h.update(c);return h.digest('hex');}
 function validateRaw(index,url){source(url);if(index.format!=='eval-lab-online-v1'||index.platform!=='darwin-arm64'||!Array.isArray(index.questions)||!index.questions.length||index.questions.length>100||!index.artifacts)throw Error('Invalid online index');const prefix=url.slice(0,url.lastIndexOf('/')+1),keys=new Set();for(const [name,a]of Object.entries(index.artifacts)){if(!/^[a-f0-9]{64}\.zip$/.test(name)||a.url!==prefix+name||!Number.isSafeInteger(a.bytes)||a.bytes<1||a.bytes>8*2**30||!Number.isSafeInteger(a.expandedBytes)||a.expandedBytes<0||a.expandedBytes>32*2**30||!/^[a-f0-9]{64}$/.test(a.sha256))throw Error('Invalid artifact');source(a.url);}for(const q of index.questions){if(typeof q.key!=='string'||keys.has(q.key)||!safe(q.path)||!q.files||!Array.isArray(q.layers)||q.layers.length>20||!q.layers.length)throw Error('Invalid question');keys.add(q.key);for(const [f,h]of Object.entries(q.files))if(!safe(f)||!/^[a-f0-9]{64}$/.test(h))throw Error('Invalid question files');if(Object.keys(q.files).length>50000)throw Error('Too many files');const archives=new Set();let downloadBytes=0,expandedBytes=0;
  for(const l of q.layers){
+  if(typeof l?.artifact!=='string'||!Object.hasOwn(index.artifacts,l.artifact))throw Error('Invalid layer');
   const artifact=index.artifacts[l.artifact];
-  if(!artifact||(l.mount!==''&&!safe(l.mount)))throw Error('Invalid layer');
+  if(!artifact||typeof artifact!=='object'||Array.isArray(artifact)||(l.mount!==''&&!safe(l.mount)))throw Error('Invalid layer');
   if(!archives.has(l.artifact)){archives.add(l.artifact);downloadBytes+=artifact.bytes;}
   expandedBytes+=artifact.expandedBytes;
   if(downloadBytes>8*2**30||expandedBytes>32*2**30)throw Error('Question exceeds capacity limits');
