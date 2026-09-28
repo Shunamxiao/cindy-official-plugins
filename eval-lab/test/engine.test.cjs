@@ -161,3 +161,18 @@ test('JSON publication never exposes partial results or replaces a completed res
   }finally{fs.open=open;fs.writeFile=writeFile;fs.unlink=unlink;fs.link=link;await fs.rm(root,{recursive:true,force:true});}
  }
 });
+
+test('imported question identity must match its manifest before preparing an answer',async()=>{
+ const {files}=require('../node/engine.cjs');
+ for(const mismatch of ['id','revision','manifestRevision','none','legacy']){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-import-identity-')),bank=path.join(root,'bank'),q=path.join(bank,'q');
+  try{
+   await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.writeFile(path.join(q,'candidate/a.txt'),'answer');
+   await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:mismatch==='id'?'other':'fixture',revision:mismatch==='revision'?'v2':'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));
+   await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'fixture@v1',...(mismatch==='legacy'?{}:{revision:mismatch==='manifestRevision'?'v2':'v1'}),path:'q',files:await files(q)}]}));
+   const p={root,importedBanks:[{id:'local',path:bank}],question:'imported:local:fixture@v1',runId:'identity',model:'m',provider:'p',harness:'h',effort:'e'};
+   if(['none','legacy'].includes(mismatch)){assert.equal((await dispatch('prepare',p)).questionId,'fixture');}
+   else{await assert.rejects(dispatch('prepare',p),/Question identity mismatch/);await assert.rejects(fs.access(path.join(root,'eval-lab-data/runs/identity')));}
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+ }
+});
