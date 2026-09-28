@@ -168,8 +168,9 @@ function translate(locale,text,params={}){
  }
  return result.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(params,key)?String(params[key]):match);
 }
+Object.assign(english,{'评测页面':'Evaluation pages','题库下载进度':'Question bank download progress','筛选历史题库':'Filter historical question banks','关闭':'Close','自动：使用全部可用 Worker 槽位':'Automatic: use all available Worker slots'});
 if(typeof module==='object')module.exports={translate};
 if(typeof window!=='undefined'){
  let uiLocale='en';window.evalLocale=uiLocale;window.evalTranslate=(text,params)=>translate(uiLocale,text,params);
- window.evalLocaleReady=(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}window.evalLocale=uiLocale;if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const e of document.querySelectorAll('[placeholder]'))e.placeholder=window.evalTranslate(e.placeholder);})();
+ window.evalLocaleReady=(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}window.evalLocale=uiLocale;if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const attr of ['placeholder','aria-label','aria-description','title','alt'])for(const e of document.querySelectorAll('['+attr+']'))e.setAttribute(attr,window.evalTranslate(e.getAttribute(attr)));})();
 }

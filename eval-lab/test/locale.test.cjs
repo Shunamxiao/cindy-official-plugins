@@ -1,5 +1,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {translate}=require('../i18n.js'),{report}=require('../lib/core.cjs'),standings=require('../lib/standings-report.cjs');
+test('all static accessible names follow Host locale while ARIA references remain identifiers',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+ const html=fs.readFileSync(path.join(__dirname,'../main-view.html'),'utf8'),code=fs.readFileSync(path.join(__dirname,'../i18n.js'),'utf8');
+ for(const locale of ['zh-CN','en','ja','ko']){
+  const elements=[...html.matchAll(/(aria-label|aria-labelledby|placeholder|title|alt)="([^"]*)"/g)].map(([,key,value])=>({key,original:value,value,getAttribute(k){return k===this.key?this.value:null;},setAttribute(k,v){if(k===this.key)this.value=v;}}));
+  const context={window:{},fetch:async()=>({json:async()=>({context:{locale}})}),NodeFilter:{SHOW_TEXT:4},document:{documentElement:{},body:{},createTreeWalker:()=>({nextNode:()=>false}),querySelectorAll:selector=>elements.filter(e=>selector.includes('['+e.key+']'))}};
+  vm.runInNewContext(code,context);await context.window.evalLocaleReady;
+  for(const e of elements){if(locale==='zh-CN'||e.key==='aria-labelledby')assert.equal(e.value,e.original);else assert.doesNotMatch(e.value,/[\u3400-\u9fff]/,e.key+': '+e.original);}
+ }
+});
 test('status polling does not wait for a hanging locale request',async()=>{
  const fs=require('node:fs'),vm=require('node:vm'),code=fs.readFileSync(require('node:path').join(__dirname,'../view.js'),'utf8');let calls=0;
  const context={window:{evalLocaleReady:new Promise(()=>{})},document:{hidden:false},refresh:async()=>{calls++;}};
