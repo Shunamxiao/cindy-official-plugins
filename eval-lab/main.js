@@ -262,12 +262,21 @@ function taskRoute(c){return {agentKind:c.harness==='claude-code'?'cc':c.harness
 const doneItem=x=>['graded','failed','cancelled','environment_invalid'].includes(x.status);
 function jobView(j){if(!j)return null;return {id:j.id,capacity:j.capacity,coordinatorUsage:j.coordinatorUsage,concurrency:j.concurrency??null,coordinatorTaskId:j.coordinator?.taskId,currentRunId:j.currentRunId,status:j.status,phase:j.phase||'preparing',total:j.items.length,finished:j.items.filter(doneItem).length,message:j.message||'',items:j.items.map(x=>({question:x.question,model:x.config.model,effort:x.config.effort,harness:x.config.harness,provider:x.config.provider,status:x.status,taskId:x.task?.taskId||x.taskId,runId:x.runId,error:x.error,waitReason:x.waitReason,telemetry:x.telemetry,released:x.released}))};}
 async function saveBatch(j){let stopped=false;await updateConfig(c=>{if(c.batch?.id!==j.id)throw Error('评测批次已变化');if(c.batch.stopRequestedAt){j.stopRequestedAt=c.batch.stopRequestedAt;stopped=!['stopping','cancelled'].includes(j.status);}return {...c,batch:j};});channel.postMessage({type:'job-progress',job:jobView(j)});if(stopped)throw Error('EVAL_STOP_REQUESTED');}
+async function assessLegacyCompletion(j,item,run){
+ if(run.taskId!==item.task.taskId)throw Error('执行回执与任务不匹配');
+ const route=taskRoute(item.config);if(Object.keys(route).some(k=>run.acceptedConfig?.[k]!==route[k]))throw Error('实际执行配置与所选模型不一致，未计分');
+ if(!run.execution||!run.completedAt)throw Error('完成回执缺少执行身份，暂不评分');
+ await evaluationPreflight();
+ j.phase='grading';await saveBatch(j);channel.postMessage({type:'job-progress',job:jobView(j)});
+ applyAssessment(item,await node('grade',{runId:item.runId,receipt:{channel:'Cindy task',sessionId:run.taskId,runId:run.runId,completedAt:new Date(run.completedAt).toISOString(),acceptedAt:run.acceptedAt,execution:run.execution,acceptedConfig:run.acceptedConfig,outputMessageId:run.outputMessageId}}));
+ await saveBatch(j);
+}
 async function stopBatch(j){
  if(j.mode!=='coordinator'){
   j.status='stopping';j.phase='stopping';await saveBatch(j);
   let pending=false;for(const item of j.items.filter(x=>!doneItem(x))){
    await recoverLegacyRun(j,item);
-   if(item.hostRun){const run=await cindy.tasks.cancel({runId:item.hostRun.runId,requestKey:j.id+':stop:'+item.runId});if(!terminalRun(run)){pending=true;continue;}}
+   if(item.hostRun){const run=await cindy.tasks.cancel({runId:item.hostRun.runId,requestKey:j.id+':stop:'+item.runId});if(!terminalRun(run)){pending=true;continue;}if(run.status==='completed'){await assessLegacyCompletion(j,item,run);continue;}}
    item.status='cancelled';
   }
   j.status=pending?'stopping':'cancelled';j.phase=j.status;j.message=pending?'等待任务停止回执；已完成成绩保留。':'评测已停止，已完成成绩保留。';await saveBatch(j);return jobView(j);
@@ -329,10 +338,7 @@ async function advanceBatchOnce(){
   const route=taskRoute(item.config);if(Object.keys(route).some(k=>run.acceptedConfig?.[k]!==route[k]))throw Error('实际执行配置与所选模型不一致，未计分');
   item.status=run.status;j.phase=run.status==='running'?'answering':run.status==='queued'?'queued':run.status==='reconciling'?'reconciling':'preparing';
   if(run.status==='completed'){
-   if(!run.execution||!run.completedAt)throw Error('完成回执缺少执行身份，暂不评分');
-   await evaluationPreflight();
-   j.phase='grading';await saveBatch(j);channel.postMessage({type:'job-progress',job:jobView(j)});
-   applyAssessment(item,await node('grade',{runId:item.runId,receipt:{channel:'Cindy task',sessionId:run.taskId,runId:run.runId,completedAt:new Date(run.completedAt).toISOString(),acceptedAt:run.acceptedAt,execution:run.execution,acceptedConfig:run.acceptedConfig,outputMessageId:run.outputMessageId}}));
+   await assessLegacyCompletion(j,item,run);
   }else if(['failed','cancelled','interrupted'].includes(run.status)){item.status=run.status==='cancelled'?'cancelled':'failed';item.error=run.error||'任务结束但未完成交卷，未计分';}
   else if(run.status==='reconciling'){item.error='宿主正在核对执行结果；不会重复发送，也不会计为零分。';}
   j.message=item.error||'';

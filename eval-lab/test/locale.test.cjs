@@ -1,5 +1,20 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {translate}=require('../i18n.js'),{report}=require('../lib/core.cjs'),standings=require('../lib/standings-report.cjs');
+test('status polling does not wait for a hanging locale request',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),code=fs.readFileSync(require('node:path').join(__dirname,'../view.js'),'utf8');let calls=0;
+ const context={window:{evalLocaleReady:new Promise(()=>{})},document:{hidden:false},refresh:async()=>{calls++;}};
+ vm.runInNewContext(code.slice(code.indexOf('async function syncProgress(){'),code.indexOf('\nsyncProgress();')),context);
+ context.syncProgress();context.syncProgress();await Promise.resolve();assert.equal(calls,2);
+});
+test('browser dates follow Host language with English fallback',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+ for(const locale of ['zh-CN','en','ja','ko']){
+  const context={window:{},fetch:async()=>({json:async()=>({context:{locale}})}),document:{documentElement:{},body:{},createTreeWalker:()=>({nextNode:()=>false}),querySelectorAll:()=>[]},NodeFilter:{SHOW_TEXT:4},Date};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../i18n.js'),'utf8'),context);await context.window.evalLocaleReady;
+  const code=fs.readFileSync(path.join(__dirname,'../view.js'),'utf8');vm.runInNewContext(code.match(/^const dateText=.*$/m)[0]+';result=dateText(1700000000000);',context);
+  assert.equal(context.result,new Date(1700000000000).toLocaleDateString(locale==='zh-CN'?'zh-CN':'en'));
+ }
+});
 test('dynamic batch messages, parameterized counts and diagnostic prefixes use English fallback',()=>{
  for(const text of ['Worker 实际配置或目录不匹配，未计分','本批已结束；环境受阻的作答不计入正式总分。','宿主正在核对执行结果；不会重复发送，也不会计为零分。','等待自动审批或用户确认']){
   assert.equal(translate('zh-CN',text),text);assert.doesNotMatch(translate('ja',text),/[\u3400-\u9fff]/);

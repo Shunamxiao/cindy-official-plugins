@@ -170,6 +170,6 @@ function translate(locale,text,params={}){
 }
 if(typeof module==='object')module.exports={translate};
 if(typeof window!=='undefined'){
- let uiLocale='en';window.evalTranslate=(text,params)=>translate(uiLocale,text,params);
- window.evalLocaleReady=(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const e of document.querySelectorAll('[placeholder]'))e.placeholder=window.evalTranslate(e.placeholder);})();
+ let uiLocale='en';window.evalLocale=uiLocale;window.evalTranslate=(text,params)=>translate(uiLocale,text,params);
+ window.evalLocaleReady=(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}window.evalLocale=uiLocale;if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const e of document.querySelectorAll('[placeholder]'))e.placeholder=window.evalTranslate(e.placeholder);})();
 }

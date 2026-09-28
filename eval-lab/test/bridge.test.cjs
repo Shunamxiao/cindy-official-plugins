@@ -13,6 +13,18 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  return {calls,replies,runs,get config(){return cfg;},tool:m=>onMessage(m),ui:(id,action,args={})=>bc.onmessage({data:{type:'request',id,action,args}}),cindy};
 }
 const args={questions:['audio@v2'],configurations:[configuration]};
+test('legacy stop grades a completion that wins cancellation and preserves validation failures',async()=>{
+ for(const outcome of ['graded','environment_invalid','wrong-route','missing-execution','grade-error']){
+  const b=bridge({root:'/selected',batch:{id:'legacy',status:'running',items:[{runId:'answer',question:'audio@v2',config:configuration,status:'running',task:{taskId:'t'},hostRun:{runId:'host'}}]}});
+  b.cindy.tasks.cancel=async()=>({runId:'host',taskId:'t',status:'completed',completedAt:2000,execution:outcome==='missing-execution'?null:{instanceId:'native',generation:1},acceptedConfig:{agentKind:'codex',model:outcome==='wrong-route'?'other':'test-model',providerId:'own-account',effort:'high',fastMode:false}});
+  const request=b.cindy.node.request;let grades=0;
+  b.cindy.node.request=async x=>{if(x.method==='grade'){grades++;if(outcome==='grade-error')throw Error('grader unavailable');return {ok:true,result:{status:outcome,reason:'environment unavailable',scoreExact:'1'}};}return request(x);};
+  await b.ui('stop','cancel');await b.ui('observe','query');
+  const item=b.config.batch.items[0];
+  if(['graded','environment_invalid'].includes(outcome)){assert.equal(item.status,outcome);assert.equal(b.config.batch.status,'cancelled');assert.equal(grades,1);}
+  else{assert.notEqual(item.status,'cancelled');assert.notEqual(b.config.batch.status,'cancelled');assert.equal(grades,outcome==='grade-error'?1:0);}
+ }
+});
 test('legacy completed receipts preserve environment-invalid grades across recovery without regrading',async()=>{
  for(const status of ['environment_invalid','graded']){
   const b=bridge({root:'/selected',batch:{id:'legacy',status:'running',items:[{runId:'answer',question:'audio@v2',config:configuration,status:'running',error:'old error',task:{taskId:'t'},hostRun:{runId:'host'}}]}});

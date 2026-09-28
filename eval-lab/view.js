@@ -20,7 +20,7 @@ function renderModels(){
 let historyBankId=null,scoreMode='latest',historyQuestion='',historyBatch='',standingsRows=[],standingsQuestions=[];
 try{historyBankId=localStorage.getItem('eval-history-bank');}catch{}
 const scoreText=n=>Number(n).toFixed(2);
-const dateText=at=>at?new Date(at).toLocaleDateString():tr('时间未知');
+const dateText=at=>at?new Date(at).toLocaleDateString(window.evalLocale==='zh-CN'?'zh-CN':'en'):tr('时间未知');
 function history(){
  const open=new Set([...document.querySelectorAll('[data-standing][open]')].map(e=>e.dataset.standing));const openQuestions=new Set([...document.querySelectorAll('[data-question-score][open]')].map(e=>e.dataset.questionScore));
  if(!state.banks.some(b=>b.id===historyBankId))historyBankId=bankId;
@@ -105,8 +105,9 @@ bind('#export',async()=>{const runIds=[...new Set(standingsRows.flatMap(r=>r.det
 bind('#pick-root',async()=>{await rpc('setup_root');picks.clear();await refresh();});bind('#pick-bank',async()=>{await rpc('setup_bank');await refresh();});bind('#import',async()=>{await rpc('setup_bank');await refresh();message('题库已载入。');});
 bind('#online-check',async()=>{const url=$('#bank-url').value.trim(),r=await rpc('online_inspect',{url});await rpc('save_source',{url});onlineIndex=r.indexId;$('#online-questions').innerHTML=r.questions.map(q=>`<label class="question-item"><input name="online-question" type="checkbox" value="${esc(q.key)}"> ${esc(q.title)} · ${(q.bytes/1048576).toFixed(1)} MiB</label>`).join('');});
 bind('#online-download',async()=>{const qs=[...document.querySelectorAll('[name=online-question]:checked')].map(e=>e.value);if(!onlineIndex||!qs.length)throw Error('请先检查题库并选择题目');for(const question of qs)await rpc('online_install',{indexId:onlineIndex,question});await refresh();message('题库已下载并校验，可离线运行。');});
-async function syncProgress(){await window.evalLocaleReady;if(document.hidden)return;try{await refresh();}catch(e){$('#sync-state').textContent=tr('连接暂时中断，正在自动重连；已有进度保留。');if(!state.job)message(e.message);}}
+async function syncProgress(){if(document.hidden)return;try{await refresh();}catch(e){$('#sync-state').textContent=tr('连接暂时中断，正在自动重连；已有进度保留。');if(!state.job)message(e.message);}}
 syncProgress();setInterval(syncProgress,5000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncProgress();});window.addEventListener('online',syncProgress);window.addEventListener('focus',syncProgress);
+window.evalLocaleReady.then(()=>{renderModels();summary();history();renderJob();syncProgress();});
 
 function downloadProgress(p){
  const panel=$('#download-panel'),meter=$('#download-meter'),cancel=$('#download-cancel');

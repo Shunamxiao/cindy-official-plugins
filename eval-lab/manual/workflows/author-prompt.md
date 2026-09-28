@@ -10,4 +10,4 @@ question.json 格式：id、revision、title、scoringVersion、environment、ch
 
 实际验证候选原版暴露缺陷、reference满分、controls/incomplete有缺陷且非满分。加确定性时序屏障、正常行为保护与逐项变异测试，保留执行日志。不可用手填分数代替执行。先查依赖可用性，不联网安装可执行代码。若材料不足，只输出候选方案和缺口，不伪造可运行题。
 
-不要把真实账号、凭证、个人路径、客户内容、原始聊天放进 candidate、reference 或公开报告。完成后调用插件 calibrate_question 执行独立校准；校准失败保持草稿。待用户在插件选择冻结发布到自己的本地题库后才成为可测版本。
+不要把真实账号、凭证、个人路径、客户内容、原始聊天放进 candidate、reference 或公开报告。完成题包和上述验证后报告结果并结束出题任务，无需调用 calibrate_question。插件会在任务结束后导回草稿并独立校准；校准失败保持草稿。待用户在插件选择冻结发布到自己的本地题库后才成为可测版本。
