@@ -1,5 +1,17 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');const {dispatch}=require('../node/engine.cjs');
 const realBankOptions={skip:process.env.EVAL_TEST_BANK?false:'Set EVAL_TEST_BANK to run public-bank integration tests'};
+test('draft retry repairs missing prompt and never replaces different source records',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-draft-retry-'));
+ try{
+  const p={root,id:'retry',revision:'v1',records:[{sessionId:'fixture',text:'selected fixture'}]};
+  const first=await dispatch('draft',p);
+  await fs.unlink(path.join(first.directory,'AUTHOR_TASK.md'));
+  assert.deepEqual(await dispatch('draft',{root,id:p.id,revision:p.revision,resume:true}),first);
+  assert.deepEqual(await dispatch('draft',p),first);
+  await assert.rejects(dispatch('draft',{...p,records:[{sessionId:'fixture',text:'different'}]}));
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(first.directory,'sources.private.json'),'utf8')),p.records);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('unavailable imported banks do not hide valid banks or existing results',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-missing-import-'));
  try{

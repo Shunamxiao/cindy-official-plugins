@@ -72,7 +72,24 @@ async function reconcileResult(p){
 }
 async function list(p){const home=await base(p.root);let names;try{names=await fs.readdir(path.join(home,'runs'));}catch(e){if(e.code==='ENOENT')return [];throw e;}const batches=new Map();try{for(const f of await fs.readdir(path.join(home,'coordination'))){if(!f.endsWith('.json')||f.endsWith('-state.json'))continue;try{const plan=await read(path.join(home,'coordination',f));for(const item of plan.items||[])if(item.runId)batches.set(item.runId,f.slice(0,-5));}catch{}}}catch(e){if(e.code!=='ENOENT')throw e;}const out=[];for(const name of names){const dir=await within(home,'runs/'+id(name));let r;try{r=await effectiveResult(dir);}catch(e){if(e.code!=='ENOENT')throw e;try{r=await read(path.join(dir,'run.json'));}catch(missing){if(missing.code==='ENOENT')continue;throw missing;}}out.push({...publicResult(r),runId:r.runId,batchId:r.batchId||batches.get(r.runId)||null});}return out;}
 async function exportReport(p){if(!Array.isArray(p.runIds)||!p.runIds.length)throw Error('Select results');const selected=[];for(const runId of [...new Set(p.runIds)]){const {dir}=await loadRun({...p,runId});try{selected.push(await effectiveResult(dir));}catch(e){if(e.code!=='ENOENT')throw e;selected.push(await read(path.join(dir,'run.json')));}}return {html:p.standings?require('../lib/standings-report.cjs')(selected.map(publicResult),{...p.standings,locale:p.locale}):report(selected,p.locale),name:'evaluation-'+new Date().toISOString().slice(0,10)+'.html'};}
-async function draft(p){const home=await base(p.root);id(p.id);id(p.revision);if(!Array.isArray(p.records)||!p.records.length)throw Error('Selected session excerpts required');const normalized=p.records.map(r=>{if(typeof r.text!=='string'||!r.text.trim()||!r.sessionId)throw Error('Source records need sessionId and text');if(r.text.length>60000)throw Error('单段记录超过60000字符，请缩小选择范围');return {sessionId:String(r.sessionId),text:r.text};});const dir=await within(home,'drafts/'+p.id+'/'+p.revision);await fs.mkdir(dir,{recursive:true});await write(path.join(dir,'sources.private.json'),normalized);const task=await fs.readFile(path.join(__dirname,'../manual/workflows/author-prompt.md'),'utf8');await fs.writeFile(path.join(dir,'AUTHOR_TASK.md'),task,{flag:'wx'});return {directory:dir,prompt:task,status:'draft'};}
+async function draft(p){
+ const home=await base(p.root);id(p.id);id(p.revision);
+ const dir=await within(home,'drafts/'+p.id+'/'+p.revision);await fs.mkdir(dir,{recursive:true});
+ const source=await within(dir,'sources.private.json');
+ const records=p.records===undefined&&p.resume?await read(source):p.records;
+ if(!Array.isArray(records)||!records.length)throw Error('Selected session excerpts required');
+ const normalized=records.map(r=>{if(typeof r.text!=='string'||!r.text.trim()||!r.sessionId)throw Error('Source records need sessionId and text');if(r.text.length>60000)throw Error('单段记录超过60000字符，请缩小选择范围');return {sessionId:String(r.sessionId),text:r.text};});
+ try{await write(source,normalized);}catch(e){
+  if(e.code!=='EEXIST')throw e;
+  if(JSON.stringify(await read(source))!==JSON.stringify(normalized))throw Error('Draft source conflict; existing records preserved');
+ }
+ const task=await fs.readFile(path.join(__dirname,'../manual/workflows/author-prompt.md'),'utf8'),prompt=await within(dir,'AUTHOR_TASK.md');
+ try{await fs.writeFile(prompt,task,{flag:'wx'});}catch(e){
+  if(e.code!=='EEXIST')throw e;
+  if(await fs.readFile(prompt,'utf8')!==task)throw Error('Draft prompt conflict; existing files preserved');
+ }
+ return {directory:dir,prompt:task,status:'draft'};
+}
 const authorHandoff=require('./author-handoff.cjs')({base,within,files,read,write,id,validateSpec});
 const calibration=require('./calibration.cjs')({base,within,files,read,write,id,validateSpec,score,runCommand,draftDirectory:authorHandoff.directory});
 async function freezeUnlocked(p){

@@ -1,5 +1,39 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),crypto=require('node:crypto');
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
+test('download cancellation failure still reaches the registered installer',async()=>{
+ const b=bridge(),request=b.cindy.node.request;let enter,release,cancelled=0;
+ const ready=new Promise(r=>enter=r),pending=new Promise(r=>release=r);
+ b.cindy.downloads.cancel=async()=>{throw Error('download transport lost');};
+ b.cindy.node.request=async x=>{
+  if(x.method==='online_plan')return {ok:true,result:{artifacts:[{sha256:'fixture',url:'https://example.test/a',bytes:1}]}};
+  if(x.method==='online_install'){enter();await pending;return {ok:true,result:{}};}
+  if(x.method==='online_cancel'){cancelled++;return {ok:true,result:{}};}
+  return request(x);
+ };
+ const install=b.ui('install','online_install',{});await ready;
+ await b.ui('cancel','cancel_download');assert.equal(cancelled,1);release();await install;
+});
+test('independent inspect and install pin the selected root until settled',async()=>{
+ for(const method of ['online_inspect','online_install']){
+  const b=bridge(),request=b.cindy.node.request;let enter,release,picked=0;
+  const ready=new Promise(r=>enter=r),pending=new Promise(r=>release=r);
+  b.cindy.pick=async()=>{picked++;return {ok:true,path:'/other'};};
+  b.cindy.node.request=async x=>{if(x.method===method){enter();await pending;return {ok:true,result:{}};}return request(x);};
+  const operation=b.ui('operation',method,{});await ready;await b.ui('root','setup_root');
+  assert.equal(picked,0);assert.equal(b.config.root,'/selected');release();await operation;
+ }
+});
+test('author draft identity survives a lost reply before any task is created',async()=>{
+ const b=bridge(),request=b.cindy.node.request;let first=true;const ids=[];
+ b.cindy.node.request=async x=>{if(x.method==='draft'){
+  assert.equal(b.config.author.id,x.params.id);ids.push(x.params.id);
+  if(first){first=false;throw Error('lost draft reply');}
+ }return request(x);};
+ await b.ui('first','author',{records:[]});assert.equal(b.replies.find(x=>x.id==='first').ok,false);
+ assert.equal(b.calls.some(x=>x.create),false);
+ await b.ui('retry','author');assert.equal(b.replies.find(x=>x.id==='retry').ok,true);
+ assert.equal(ids.length,2);assert.equal(ids[0],ids[1]);
+});
 function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-model',name:'Model',agent:'codex',providerId:'own-account',providerName:'My account',efforts:['low','high'],defaultEffort:'low'}]}){
  let onMessage,bc,cfg=structuredClone(initial);const calls=[],replies=[],runs=new Map(),tasks=new Map();let sequence=0;
  const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='author_stage')result={directory:x.params.workspace+'/author'};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(['online_inspect','online_cached'].includes(x.method))result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={workspace:x.params.workspace,path:x.params.workspace+'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
