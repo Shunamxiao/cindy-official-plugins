@@ -31,7 +31,7 @@ async function settleWorkers(j,team){
    if(w&&(item.result||item.status==='blocked')&&!item.released&&w.worker_id===item.workerId&&w.session_id===item.taskId&&workerCompletedAt(w)&&!workerPending(w)){
     // Persist the failure and exact observed terminal before freeing its slot.
     item.terminalReceipt={...item.telemetry,workerId:w.worker_id,sessionId:w.session_id,completedAt:workerCompletedAt(w),status:w.status,provenance:'host-team-observed'};
-    if(!item.result)await node('record_failure',{runId:item.runId,reason:item.error,receipt:item.terminalReceipt});
+    if(!item.result){const result=await node('record_failure',{runId:item.runId,reason:item.error,receipt:item.terminalReceipt});if(['graded','environment_invalid'].includes(result.status))applyAssessment(item,result);else item.result=result;}
     await saveBatch(j);
     const release=await cindy.tasks.releaseWorker({taskId:j.coordinator.taskId,workerId:w.worker_id,completedAt:workerCompletedAt(w)});
     if(release.ok){item.released=true;await saveBatch(j);}else item.releaseReason=release.message;

@@ -83,7 +83,8 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
    return publicStep(result);
   }
   const source=path.join(attempt,'source'),output=path.join(attempt,'grade.json');
-  await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});
+  try{await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});}
+  catch(error){await fs.rm(attempt,{recursive:true,force:true});throw error;}
   const execution=await runCommand('python3',['-B',path.join(dir,'author/grade.py'),source,output]);
   let raw,calculated;
   try{raw=await read(output);if(execution.code!==0||execution.timedOut)raw={status:'environment_invalid',reason:'Grader process failed or timed out'};if(!raw||!['graded','environment_invalid'].includes(raw.status))throw Error('Invalid grader result status');if(raw.status==='graded')calculated=score(spec,raw.items);}catch(e){raw={status:'environment_invalid',reason:e.message};}

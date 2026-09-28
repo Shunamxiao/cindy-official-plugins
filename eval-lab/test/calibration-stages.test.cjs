@@ -103,3 +103,16 @@ test('malformed grader output becomes a readable ungraded receipt without replay
   assert.deepEqual(await dispatch('calibrate_finish',p),result);
  });
 });
+
+test('known input copy failure removes only its unstarted attempt and permits retry',()=>fixture(async(root)=>{
+ const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
+ const copy=fs.cp,child=require('node:child_process'),spawn=child.spawn;let starts=0;
+ child.spawn=(...args)=>{starts++;return spawn(...args);};
+ try{
+  fs.cp=async(...args)=>{await copy(...args);throw Object.assign(Error('copy full'),{code:'ENOSPC'});};
+  await assert.rejects(dispatch('calibrate_step',p),/copy full/);assert.equal(starts,0);
+  await assert.rejects(fs.access(path.join(root,'eval-lab-data/calibrations',checkId,'attempt-0')));
+  fs.cp=copy;assert.equal((await dispatch('calibrate_step',p)).status,'graded');assert.equal(starts,1);
+  await dispatch('calibrate_step',p);assert.equal(starts,1);
+ }finally{fs.cp=copy;child.spawn=spawn;}
+}));
