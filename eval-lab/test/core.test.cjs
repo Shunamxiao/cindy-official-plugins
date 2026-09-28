@@ -17,3 +17,13 @@ test('shared prerequisite across groups preserves frozen weights without double-
 });
 
 test("public results never expose free-form grader diagnostics",()=>{const {publicResult}=require("../lib/core.cjs");const r={status:"environment_invalid",reason:"Cannot open /Users/example/private/client-secret.txt token=not-a-real-secret"};assert.ok(!JSON.stringify(publicResult(r)).includes("/Users/"));assert.ok(!report([r]).includes("not-a-real-secret"));assert.match(report([r]),/详细诊断保留在本地/);});
+
+test('shared report distinguishes providers with report-local labels and no account identifiers',()=>{
+ const row={title:'Question',model:'same-model',harness:'same-harness',effort:'same-effort',questionId:'q',revision:'v1',status:'graded',score:1,scoreExact:'1'};
+ const rows=[{...row,provider:'private-account-a',costUSD:1},{...row,provider:'private-account-b',costUSD:2}];
+ for(const locale of ['zh-CN','en','ja','ko']){
+  const html=report(rows,locale),label=locale==='zh-CN'?'来源':'Source';
+  for(const n of [1,2])assert.equal(html.split(label+' '+n).length-1,2);
+  assert.ok(!html.includes('private-account'));assert.ok(html.includes('$1'));assert.ok(html.includes('$2'));
+ }
+});

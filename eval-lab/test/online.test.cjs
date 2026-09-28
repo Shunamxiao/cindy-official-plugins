@@ -78,3 +78,9 @@ test('fresh and cached installs reject hash-correct invalid question specificati
   }finally{await fs.rm(root,{recursive:true,force:true});}
  }
 });
+
+test('installation normalizes native abort errors without losing cancellation semantics',async()=>{
+ const controller=new AbortController();controller.abort();
+ const svc=service({base:async()=>{throw Error('must not reach storage');},within,files,runCommand});
+ await assert.rejects(svc.install({signal:controller.signal}),e=>e.name==='AbortError'&&e.code==='ABORT_ERR'&&e.message==='下载已取消');
+});

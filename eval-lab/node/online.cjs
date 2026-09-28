@@ -38,7 +38,8 @@ const inflight=new Map();
 function once(key,fn){if(!inflight.has(key))inflight.set(key,Promise.resolve().then(fn).finally(()=>inflight.delete(key)));return inflight.get(key);}
 const unpackTimeout=bytes=>Math.min(14*60*1000,Math.max(120000,Math.ceil(bytes/(10*2**20))*1000+20000));
 function installError(e){
- if(e.name==='AbortError'||e.message==='下载已取消'||e.code==='UNSUPPORTED_PLATFORM')return e;
+ if(e.name==='AbortError')return Object.assign(Error('下载已取消'),{name:'AbortError',code:'ABORT_ERR'});
+ if(e.message==='下载已取消'||e.code==='UNSUPPORTED_PLATFORM')return e;
  let code='INSTALL_FAILED',message='题库安装未完成，请重试；仍失败请联系题库维护者。';
  if(e.code==='EXTRACTION_TIMEOUT'){code=e.code;message='题库解包超时，请检查磁盘负载或改用更快的存储后重试；已有题库和成绩保留。';}
  else if(/更新 Cindy/.test(e.message)){code='HOST_UPDATE_REQUIRED';message='请更新 Cindy 以使用受管下载';}
