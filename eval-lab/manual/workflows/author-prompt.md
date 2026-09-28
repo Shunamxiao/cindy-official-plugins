@@ -4,7 +4,7 @@
 
 创建 candidate/、reference/、author/grade.py、question.json、author/editable.json、controls/incomplete/。candidate 仅包含最小可运行真实源码、运行环境、原有检查、TASK.md 和公开产品约定。TASK.md 简短，不告知缺陷数量、根因、位置、修复步骤或隐藏评分用例，不规定作答时间。公开材料必须能推导产品取舍，不用隐藏规则裁决歧义。
 
-question.json 格式：id、revision、title、scoringVersion、environment、changeNote、groups。每组含 id、weight（正分数，全部合计1）、mode（ratio/all）、items（全局唯一字符串标识）。每题1分；多个考核点组成能力组。原有正常行为必须保护，环境不可用单列，不当0分。更新题目生成新 revision，不能覆盖旧分数。
+question.json 格式：id、revision、title、scoringVersion、environment、changeNote、groups。每组含 id、weight（正分数，全部合计1）、mode（ratio/all）、items（字符串标识，组内不重复；同一标识在全题只对应同一个布尔结果，可作为共享前置条件被不同组引用，不能用同一标识表示不同考核点）。每题1分；多个考核点组成能力组。原有正常行为必须保护，环境不可用单列，不当0分。更新题目生成新 revision，不能覆盖旧分数。
 
 评分命令 python3 -B author/grade.py <candidate绝对目录> <outputJson绝对路径>。输出 {status:'graded',items:{考核点:boolean}} 或 {status:'environment_invalid',reason:说明}。使用相对 __file__ 定位可信资产，不依赖作者电脑绝对路径。不能调用被测模型新增的测试充当评分。评分器必须检查禁止改动的题面/环境/原有测试。参考答案、评分器、原始聊天只留作者目录。
 

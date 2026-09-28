@@ -506,7 +506,7 @@ async function action(name,args={},callId){
   const current=(await config()).author;
   if(current?.pendingCreate)return await createAuthor(current);
   if(current?.pendingSend)return await sendAuthor(current);
-  if(current&&!['drafting','calibrated','failed'].includes(current.status))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
+  if(current?.status!=='drafting'&&await authorPending(current))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
   await taskCapability();const resuming=current?.status==='drafting',draftId=resuming?current.id:args.id||'question-'+crypto.randomUUID();const revision=resuming?current.revision:args.revision||'v1';
   if(!resuming)await updateConfig(c=>({...c,author:{id:draftId,revision,status:'drafting'}}));
   const drafted=await node('draft',{...args,id:draftId,revision,resume:resuming},callId);
@@ -527,7 +527,7 @@ async function action(name,args={},callId){
   try{
    const a=(await config()).author,matching=a&&a.id===args.id&&a.revision===args.revision;
    if(name==='create_question_draft'){
-    if((a&&!matching&&!['calibrated','failed'].includes(a.status))||(matching&&(a.runId||a.pendingCreate||a.pendingSend)))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
+    if((!matching&&await authorPending(a))||(matching&&(a.runId||a.pendingCreate||a.pendingSend)))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
     await updateConfig(c=>({...c,author:{id:args.id,revision:args.revision,status:'drafting'}}));
     const result=await node('draft',{...args,resume:!!matching},callId);
     if(result.status==='input_required'){

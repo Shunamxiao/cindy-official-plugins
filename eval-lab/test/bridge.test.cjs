@@ -562,7 +562,7 @@ test('failed calibration is terminal, visible, and does not run again on polling
  await b.ui('a','author',{records:[]});b.runs.get('r1').status='completed';
  b.cindy.node.request=async x=>{if(x.method==='calibrate_begin'){count++;throw Error('invalid draft');}return request(x);};
  for(const id of ['s1','s2']){await b.ui(id,'status');assert.equal(b.replies.at(-1).result.author.status,'failed');assert.equal(b.replies.at(-1).result.author.error,'invalid draft');}
- assert.equal(count,1);await b.ui('new','author',{records:[]});assert.equal(b.replies.at(-1).ok,true);
+ assert.equal(count,1);const author=JSON.stringify(b.config.author);await b.ui('new','author',{records:[]});assert.equal(b.replies.at(-1).ok,false);assert.equal(JSON.stringify(b.config.author),author);
 });
 
 test('independent prepare ignores a previous page cancellation',async()=>{
@@ -800,5 +800,16 @@ test('page and tool exports use Host locale with safe English fallback',async()=
   if(entry==='page')await b.ui('export','export',{runIds:['r'],locale:'untrusted'});
   else await b.tool({type:'tool-call',tool:'export_report',callId:'export',args:{runIds:['r'],locale:'untrusted'}});
   assert.equal(b.calls.find(x=>x.method==='export').params.locale,locale==='zh-CN'?'zh-CN':'en');
+ }
+});
+
+test('all draft creation entries preserve failed but recoverable author ownership',async()=>{
+ for(const entry of ['author','create_question_draft'])for(const kind of ['handoff','calibration','lookup']){
+  const author={id:'old',revision:'v1',status:'failed',taskId:'t-old',runId:'r-old',handoff:true,...(kind==='calibration'?{calibration:{ok:false,checkId:'old-check'}}:{})};
+  const b=bridge({author}),before=JSON.stringify(b.config.author);
+  b.cindy.tasks.getRun=async()=>{if(kind==='lookup')throw Error('unknown run');return {status:'completed'};};
+  if(entry==='author')await b.ui('new','author',{id:'new',revision:'v1',records:[]});
+  else await b.tool({type:'tool-call',tool:entry,callId:'new',args:{id:'new',revision:'v1',records:[]}});
+  assert.equal(JSON.stringify(b.config.author),before);assert.equal(b.calls.some(x=>x.method==='draft'||x.create||x.send),false);
  }
 });
