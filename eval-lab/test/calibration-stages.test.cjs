@@ -110,9 +110,23 @@ test('known input copy failure removes only its unstarted attempt and permits re
  child.spawn=(...args)=>{starts++;return spawn(...args);};
  try{
   fs.cp=async(...args)=>{await copy(...args);throw Object.assign(Error('copy full'),{code:'ENOSPC'});};
-  await assert.rejects(dispatch('calibrate_step',p),/copy full/);assert.equal(starts,0);
+  await assert.rejects(dispatch('calibrate_step',p),/磁盘空间/);assert.equal(starts,0);
   await assert.rejects(fs.access(path.join(root,'eval-lab-data/calibrations',checkId,'attempt-0')));
   fs.cp=copy;assert.equal((await dispatch('calibrate_step',p)).status,'graded');assert.equal(starts,1);
   await dispatch('calibrate_step',p);assert.equal(starts,1);
  }finally{fs.cp=copy;child.spawn=spawn;}
 }));
+
+test('calibration copy and cleanup errors never expose source or destination paths',async()=>{
+ for(const code of ['ENOSPC','EDQUOT','EACCES','EPERM','EROFS','EIO','ENOENT','UNKNOWN'])await fixture(async(root)=>{
+  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0},copy=fs.cp;
+  fs.cp=async()=>{throw Object.assign(Error(code+' copyfile '+root+'/private-source -> '+root+'/private-output'),{code});};
+  try{await assert.rejects(dispatch('calibrate_step',p),e=>{assert.equal(e.code,code);assert.ok(!e.message.includes(root));assert.match(e.message,/校准材料.*重试/);return true;});}finally{fs.cp=copy;}
+ });
+ await fixture(async(root)=>{
+  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0},copy=fs.cp,remove=fs.rm;
+  fs.cp=async()=>{throw Object.assign(Error(root),{code:'EIO'});};fs.rm=async()=>{throw Object.assign(Error(root),{code:'EACCES'});};
+  try{await assert.rejects(dispatch('calibrate_step',p),e=>!e.message.includes(root)&&/清理未完成/.test(e.message));}finally{fs.cp=copy;fs.rm=remove;}
+  await assert.rejects(dispatch('calibrate_step',p),/execution is unknown/);
+ });
+});

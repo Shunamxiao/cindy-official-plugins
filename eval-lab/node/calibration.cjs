@@ -1,5 +1,9 @@
 'use strict';
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+function inputError(error,cleanup=false){
+ const message=cleanup?'校准材料清理未完成，请检查存储权限和连接；已有文件保留，未重新执行。':['ENOSPC','EDQUOT'].includes(error.code)?'校准材料复制失败，请释放磁盘空间后重试。':['EACCES','EPERM','EROFS'].includes(error.code)?'校准材料复制失败，请检查存储读写权限后重试。':'校准材料复制失败，请检查存储连接和材料是否可读后重试。';
+ return Object.assign(Error(message),{code:error.code||'CALIBRATION_INPUT_FAILED'});
+}
 const names=['candidate','reference','controls/incomplete'];
 const publicStep=({name,status,scoreExact})=>({name,status,scoreExact});
 module.exports=function calibration({base,within,files,read,write,id,validateSpec,score,runCommand,draftDirectory=async p=>within(await base(p.root),'drafts/'+id(p.id)+'/'+id(p.revision))}){
@@ -84,7 +88,7 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   }
   const source=path.join(attempt,'source'),output=path.join(attempt,'grade.json');
   try{await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});}
-  catch(error){await fs.rm(attempt,{recursive:true,force:true});throw error;}
+  catch(error){try{await fs.rm(attempt,{recursive:true,force:true});}catch(cleanup){throw inputError(cleanup,true);}throw inputError(error);}
   const execution=await runCommand('python3',['-B',path.join(dir,'author/grade.py'),source,output]);
   let raw,calculated;
   try{raw=await read(output);if(execution.code!==0||execution.timedOut)raw={status:'environment_invalid',reason:'Grader process failed or timed out'};if(!raw||!['graded','environment_invalid'].includes(raw.status))throw Error('Invalid grader result status');if(raw.status==='graded')calculated=score(spec,raw.items);}catch(e){raw={status:'environment_invalid',reason:e.message};}
