@@ -63,3 +63,18 @@ test('Node export dispatch passes the requested locale to both actual report for
   }
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('default bank display and export title follow locale without translating user bank names',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),code=fs.readFileSync(require('node:path').join(__dirname,'../view.js'),'utf8');
+ for(const locale of ['zh-CN','en','ja','ko']){
+  const elements=new Map(),calls=[],$=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);};let exportAction;
+  const context={$,refreshing:false,state:{models:[]},bankId:'default',modelStamp:'[]',picks:new Map(),tr:t=>translate(locale,t),esc:String,summary(){},history(){},renderJob(){},message(){},renderModels(){},historyBankId:'default',standingsRows:[],standingsQuestions:[],scoreMode:'latest',bind:(id,fn)=>{exportAction=fn;},rpc:async(action,args)=>{calls.push({action,args});return action==='status'?{banks:[{id:'default',name:'Cindy 实战题库',questions:[]},{id:'imported:user',name:'Cindy 实战题库',questions:[]}],models:[],drafts:[],runs:[]}:{saved:true};}};
+  context.bank=()=>context.state.banks.find(b=>b.id===context.bankId);
+  vm.runInNewContext(code.slice(code.indexOf('async function refresh(){'),code.indexOf('\nfunction bind(')),context);await context.refresh();
+  const expected=locale==='zh-CN'?'Cindy 实战题库':'Cindy Practical Evaluation Bank';
+  assert.equal(context.state.banks[0].name,expected);assert.equal(context.state.banks[1].name,'Cindy 实战题库');
+  assert.ok($('#bank').innerHTML.includes(expected));
+  vm.runInNewContext(code.match(/^bind\('#export'.*$/m)[0],context);await exportAction();
+  assert.equal(calls.at(-1).args.standings.title,expected);
+ }
+});

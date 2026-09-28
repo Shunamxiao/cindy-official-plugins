@@ -1,4 +1,5 @@
 const english={
+'Cindy 实战题库':'Cindy Practical Evaluation Bank',
 '草稿材料缺失或不完整，请重新选择材料创建题目；原文件保留，尚未派发出题任务。':'Draft materials are missing or incomplete. Select materials to create a new question. Original files are preserved; no authoring task has been dispatched.',
 '校准未通过，请检查校准报告并修正草稿后重试。':'Calibration failed. Check its report, correct the draft and retry.',
 '此题库需要 Apple 芯片的 macOS，请在支持的设备上安装和运行，或导入兼容当前平台的题库。':'This bank requires macOS on Apple silicon. Install and run it on a supported device, or import a bank compatible with this platform.',
