@@ -86,8 +86,9 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});
   const execution=await runCommand('python3',['-B',path.join(dir,'author/grade.py'),source,output]);
   let raw,calculated;
-  try{raw=await read(output);if(execution.code!==0||execution.timedOut)raw={status:'environment_invalid',reason:'Grader process failed or timed out'};if(raw.status==='graded')calculated=score(spec,raw.items);}catch(e){raw={status:'environment_invalid',reason:e.message};}
+  try{raw=await read(output);if(execution.code!==0||execution.timedOut)raw={status:'environment_invalid',reason:'Grader process failed or timed out'};if(!raw||!['graded','environment_invalid'].includes(raw.status))throw Error('Invalid grader result status');if(raw.status==='graded')calculated=score(spec,raw.items);}catch(e){raw={status:'environment_invalid',reason:e.message};}
   const result={name,status:raw.status,score:calculated?.value??null,scoreExact:calculated?.exact??null,execution,raw};
+  receipt(result,name,spec);
   const tmp=path.join(attempt,'receipt.json');await write(tmp,result);await fs.rename(tmp,resultPath);
   return publicStep(result);
  }

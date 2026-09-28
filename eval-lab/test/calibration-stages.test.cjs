@@ -85,3 +85,21 @@ test('missing plan recovers preparation only, publishes atomically and preserves
  await fs.unlink(plan);await fs.mkdir(path.join(folder,'attempt-0'));await assert.rejects(dispatch('calibrate_begin',p),/execution evidence/);await assert.rejects(fs.access(plan));
  await fs.writeFile(plan,'{broken');await assert.rejects(dispatch('calibrate_begin',p));assert.equal(await fs.readFile(plan,'utf8'),'{broken');
 }));
+
+test('malformed grader output becomes a readable ungraded receipt without replay',async()=>{
+ for(const raw of [{},{status:'unexpected'},[],null,{status:'graded',items:{}},{status:'environment_invalid',reason:'fixture'}])await fixture(async(root,directory)=>{
+  const text=JSON.stringify(raw);
+  await fs.writeFile(path.join(directory,'author/grade.py'),"import pathlib,sys\np=pathlib.Path(sys.argv[1]); (p/'executed').write_text('once')\npathlib.Path(sys.argv[2]).write_text("+JSON.stringify(text)+")\n");
+  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId},folder=path.join(root,'eval-lab-data/calibrations',checkId);
+  for(let step=0;step<3;step++){
+   const result=await dispatch('calibrate_step',{...p,step});assert.equal(result.status,'environment_invalid');assert.equal(result.scoreExact,null);
+   const attempt=path.join(folder,'attempt-'+step);assert.equal(await fs.readFile(path.join(attempt,'grade.json'),'utf8'),text);
+   // Removing the execution input would make a replay observably fail.
+   await fs.rm(path.join(attempt,'source'),{recursive:true});
+   if(step===0)await fs.rename(path.join(folder,'step-0.json'),path.join(attempt,'receipt.json'));
+   assert.deepEqual(await dispatch('calibrate_step',{...p,step}),result);
+  }
+  const result=await dispatch('calibrate_finish',p);assert.equal(result.ok,false);assert.ok(result.results.every(r=>r.status==='environment_invalid'&&r.scoreExact===null));
+  assert.deepEqual(await dispatch('calibrate_finish',p),result);
+ });
+});
