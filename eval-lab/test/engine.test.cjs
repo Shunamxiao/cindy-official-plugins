@@ -88,9 +88,9 @@ test('file manifests hash streams and respond to cancellation without whole-file
 });
 test('prepare cleans partial copies and records, then retries the same run',async()=>{
  const {files}=require('../node/engine.cjs');
- for(const external of [false,true])for(const fail of ['copy','record']){
+ for(const external of [false,true])for(const fail of ['copy','record','cleanup','conflict']){
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-prepare-failure-')),bank=path.join(root,'bank'),q=path.join(bank,'q'),candidate=path.join(q,'candidate');
-  const cp=fs.cp,open=fs.open;
+  const cp=fs.cp,open=fs.open,unlink=fs.unlink,link=fs.link;
   try{
    await fs.mkdir(candidate,{recursive:true});await fs.writeFile(path.join(candidate,'a.txt'),'answer');
    await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));
@@ -98,7 +98,11 @@ test('prepare cleans partial copies and records, then retries the same run',asyn
    const workspace=path.join(root,'host');if(external)await fs.mkdir(workspace);
    const p={root,bank,question:'fixture@v1',runId:'retry',model:'m',provider:'p',harness:'h',effort:'e',...(external?{workspace}:{})};
    fs.cp=async(...args)=>{await cp(...args);if(fail==='copy')throw Error('copy interrupted');};
-   fs.open=async(...args)=>{const h=await open(...args);if(fail==='record'&&String(args[0]).endsWith('/run.json')){h.writeFile=async()=>{throw Error('record interrupted');};}return h;};
+   fs.open=async(...args)=>{const h=await open(...args);if(fail==='record'&&/[\/]run-[0-9a-f-]+\.tmp$/.test(String(args[0]))){const write=h.writeFile.bind(h);h.writeFile=async()=>{await write('{partial');await assert.rejects(fs.access(path.join(path.dirname(args[0]),'run.json')));throw Error('record interrupted');};}return h;};
+   if(fail==='cleanup')fs.unlink=async target=>{if(/run-[0-9a-f-]+\.tmp$/.test(target))throw Error('cleanup interrupted');return unlink(target);};
+   if(fail==='conflict')fs.link=async(src,dest)=>{await fs.writeFile(dest,'winner');return link(src,dest);};
+   if(fail==='cleanup'){const result=await dispatch('prepare',p);assert.equal(JSON.parse(await fs.readFile(path.join(root,'eval-lab-data/runs/retry/run.json'),'utf8')).runId,result.runId);assert.equal(await fs.readFile(path.join(result.workspace,'a.txt'),'utf8'),'answer');continue;}
+   if(fail==='conflict'){await assert.rejects(dispatch('prepare',p),{code:'EEXIST'});assert.equal(await fs.readFile(path.join(root,'eval-lab-data/runs/retry/run.json'),'utf8'),'winner');assert.equal(await fs.readFile(path.join(external?workspace:path.join(root,'eval-lab-data/runs/retry/workspace'),'a.txt'),'utf8'),'answer');continue;}
    await assert.rejects(dispatch('prepare',p),/interrupted/);fs.cp=cp;fs.open=open;
    assert.deepEqual(await dispatch('runs',{root}),[]);
    const abandoned=path.join(root,'eval-lab-data/runs/abandoned');await fs.mkdir(abandoned,{recursive:true});
@@ -106,7 +110,7 @@ test('prepare cleans partial copies and records, then retries the same run',asyn
    if(external)assert.deepEqual(await fs.readdir(workspace),[]);
    const r=await dispatch('prepare',p);assert.equal(await fs.readFile(path.join(r.workspace,'a.txt'),'utf8'),'answer');
    assert.equal((await dispatch('prepare',p)).runId,r.runId);
-  }finally{fs.cp=cp;fs.open=open;await fs.rm(root,{recursive:true,force:true});}
+  }finally{fs.cp=cp;fs.open=open;fs.unlink=unlink;fs.link=link;await fs.rm(root,{recursive:true,force:true});}
  }
 });
 

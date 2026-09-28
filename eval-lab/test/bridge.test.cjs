@@ -835,3 +835,27 @@ test('installed current default stays available as an explicit offline bank',asy
  await b.ui('catalog','status');const bank=b.replies.find(r=>r.id==='catalog').result.banks.find(b=>b.id===key);assert.ok(bank);
  await b.ui('start','start',{...args,questions:bank.questions.map(q=>q.key)});assert.equal(b.replies.find(r=>r.id==='start').ok,true);assert.equal(inspected,0);assert.equal(b.config.batch.items[0].question,key);
 });
+
+test('invalid draft identifiers never persist a pending author or reach Node',async()=>{
+ for(const entry of ['author','create_question_draft'])for(const field of ['id','revision'])for(const invalid of ['space id','a/b','a'.repeat(97)]){
+  const b=bridge(),params={id:'valid',revision:'v1',[field]:invalid,records:[]};
+  if(entry==='author')await b.ui('invalid',entry,params);else await b.tool({type:'tool-call',tool:entry,callId:'invalid',args:params});
+  assert.equal(b.config.author,undefined);assert.equal(b.calls.some(x=>x.method==='draft'||x.create||x.send),false);
+ }
+});
+test('installer cleanup failure cannot override a published installation',async()=>{
+ const b=bridge(),request=b.cindy.node.request;
+ b.cindy.node.request=async x=>x.method==='online_cancel'?{ok:false,message:'cleanup unavailable'}:request(x);
+ await b.ui('install','online_install',{});assert.equal(b.replies.find(r=>r.id==='install').ok,true);assert.equal(b.replies.filter(r=>r.type==='download-progress').at(-1).phase,'ready');
+});
+test('download cancellation failure still advances coordinator stop without status polling',async()=>{
+ const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let enter,release;
+ const ready=new Promise(r=>enter=r),held=new Promise(r=>release=r);
+ b.cindy.node.request=async x=>{if(x.method==='online_install'){enter();await held;return {ok:true,result:{}};}return request(x);};
+ b.cindy.downloads.cancel=async()=>({ok:false,message:'cancel unavailable'});
+ // Keep the download id live through unpacking.
+ const prior=b.cindy.node.request;b.cindy.node.request=async x=>x.method==='online_plan'?{ok:true,result:{artifacts:[{sha256:'x',url:'https://example.test/a',bytes:1}]}}:prior(x);
+ const install=b.ui('install','online_install',{});await ready;
+ await b.ui('stop','cancel');release();await install;
+ assert.ok(b.calls.some(x=>x.send?.requestKey.endsWith(':stop')));assert.equal(b.replies.find(r=>r.id==='stop').ok,false);
+});

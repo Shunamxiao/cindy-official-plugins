@@ -142,6 +142,7 @@ async function advanceCoordinator(j){
 
 const channel=new BroadcastChannel('eval-lab');
 const inflight=new Map();
+function draftIdentifier(x){if(typeof x!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}$/.test(x))throw Error('Invalid identifier');return x;}
 async function checked(p){const r=await p;if(!r||!r.ok)throw Error(r?.message||r?.errorCode||'Host request failed');return r;}
 const isTransientReadError=e=>e?.message==='读取身份校验失败(目标 identity 不一致)';
 let configQueue=Promise.resolve();
@@ -230,7 +231,7 @@ async function installQuestion(args,fromLaunch=false){
  channel.postMessage({type:'download-progress',phase:'ready'});
  return result;
  }catch(e){channel.postMessage({type:'download-progress',phase:downloadCancelled?'cancelled':'failed'});throw e;}
- finally{try{if(activeInstall)await node('online_cancel',{operationId:activeInstall});}finally{downloadBusy=false;activeDownload=null;activeInstall=null;}}
+ finally{try{if(activeInstall)await node('online_cancel',{operationId:activeInstall});}catch{/* Cleanup cannot replace the installation outcome. */}finally{downloadBusy=false;activeDownload=null;activeInstall=null;}}
 }
 async function resolveQuestions(wanted,fromLaunch=false){
  const c=await readyConfig(),available=(await node('bank')).questions,resolved=[];let remote;
@@ -493,8 +494,7 @@ async function action(name,args={},callId){
   if(!current||!['running','stopping','needs_attention'].includes(current.status)){await cancelPreparation();return launching?{id:'preparation',status:'cancelled',phase:'cancelled',total:0,finished:0,items:[],message:'已停止准备。'}:jobView(current);}
   const saved=await updateConfig(c=>{if(c.batch?.id!==current.id)throw Error('评测批次已变化');return {...c,batch:{...c.batch,stopRequestedAt:Date.now(),status:'stopping',phase:'stopping',message:'已收到停止请求，正在结束当前操作；不再准备后续题目。'}};});
   const job=jobView(saved.batch);channel.postMessage({type:'job-progress',job});
-  await cancelPreparation();
-  if(!advancing)void advanceBatch().catch(e=>progress('停止未完成：'+e.message));return job;
+  try{await cancelPreparation();}finally{if(!advancing)void advanceBatch().catch(e=>progress('停止未完成：'+e.message));}return job;
  }
  if(name==='cancel_download'){await cancelPreparation();return {ok:true};}
  if(name==='online_install')return installQuestion(args);
@@ -510,6 +510,7 @@ async function action(name,args={},callId){
   if(current?.pendingSend)return await sendAuthor(current);
   if(current?.status!=='drafting'&&await authorPending(current))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
   await taskCapability();const resuming=current?.status==='drafting',draftId=resuming?current.id:args.id||'question-'+crypto.randomUUID();const revision=resuming?current.revision:args.revision||'v1';
+  draftIdentifier(draftId);draftIdentifier(revision);
   if(!resuming)await updateConfig(c=>({...c,author:{id:draftId,revision,status:'drafting'}}));
   const drafted=await node('draft',{...args,id:draftId,revision,resume:resuming},callId);
   if(drafted.status==='input_required'){
@@ -529,6 +530,7 @@ async function action(name,args={},callId){
   try{
    const a=(await config()).author,matching=a&&a.id===args.id&&a.revision===args.revision;
    if(name==='create_question_draft'){
+    draftIdentifier(args.id);draftIdentifier(args.revision);
     if((!matching&&await authorPending(a))||(matching&&(a.runId||a.pendingCreate||a.pendingSend)))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
     await updateConfig(c=>({...c,author:{id:args.id,revision:args.revision,status:'drafting'}}));
     const result=await node('draft',{...args,resume:!!matching},callId);
