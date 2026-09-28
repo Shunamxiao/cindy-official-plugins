@@ -95,3 +95,12 @@ test('pending Host locale keeps dynamic bank and export consistent with static p
   assert.equal(context.state.banks[0].name,expected);assert.ok($('#bank').innerHTML.includes(expected));assert.equal(calls.at(-1).args.standings.title,expected);assert.equal(context.tr('开始测试'),label.textContent);
  }
 });
+
+ test('Node exports localize ungraded statuses without exposing internal status values',async()=>{
+ const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),{dispatch}=require('../node/engine.cjs');const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-status-locale-'));
+ const cases={prepared:'待交卷',failed:'未能评分',cancelled:'已停止',environment_invalid:'环境受阻，不计分',unexpected_status:'未知'};
+ try{for(const [status,label] of Object.entries(cases)){
+  const dir=path.join(root,'eval-lab-data/runs/sample');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'run.json'),JSON.stringify({runId:'sample',questionId:'q',title:'Question',revision:'v1',model:'Model',status,score:null,scoreExact:null}));
+  for(const locale of ['zh-CN','en','ja','ko']){const {html}=await dispatch('export',{root,runIds:['sample'],locale});assert.ok(html.includes(translate(locale,label)),status+': '+locale);assert.ok(!html.includes('>'+status+'<'));assert.doesNotMatch(html,/0 \/ 1/);}
+ }}finally{await fs.rm(root,{recursive:true,force:true});}
+});

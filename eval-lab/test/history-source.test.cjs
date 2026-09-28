@@ -9,6 +9,10 @@ test('existing run bank projects the same opaque source as catalog without rewri
   const catalog=await dispatch('bank',{root,importedBanks:[{id:'a',path:path.join(root,'one')},{id:'b',path:path.join(root,'two')}]}),runs=await dispatch('runs',{root});
   assert.equal(typeof runs[0].sourceKey,'string');assert.notEqual(runs[0].sourceKey,runs[1].sourceKey);
   assert.equal(catalog.questions[0].sourceKey,runs.find(r=>r.runId==='one').sourceKey);assert.doesNotMatch(JSON.stringify(runs),new RegExp(root));assert.equal(await fs.readFile(record,'utf8'),before);
+  await fs.rename(path.join(root,'one'),path.join(root,'moved'));
+  const moved=await dispatch('bank',{root,importedBanks:[{id:'old',path:path.join(root,'one')},{id:'new',path:path.join(root,'moved')}]}),retained=await dispatch('runs',{root});
+  assert.notEqual(moved.questions.find(q=>q.key.startsWith('imported:new:')).sourceKey,retained.find(r=>r.runId==='one').sourceKey);assert.equal(await fs.readFile(record,'utf8'),before);
+
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 test('history and export exclude another source even for identical question versions',async()=>{
@@ -19,6 +23,9 @@ test('history and export exclude another source even for identical question vers
  vm.runInNewContext(code.slice(code.indexOf('function history(){'),code.indexOf('\nfunction ',code.indexOf('function history(){')+1)),context);
  context.history();vm.runInNewContext(code.match(/^bind\('#export'.*$/m)[0],context);await click();assert.deepEqual(Array.from(exported.runIds),['own']);assert.match($('#history-question').innerHTML,/v1/);assert.doesNotMatch($('#history-question').innerHTML,/v0/);
  context.historyQuestion=context.EvalStandings.questionKey(run('old','one','v1'));context.history();await click();assert.deepEqual(Array.from(exported.runIds),['old']);
+ assert.match($('#history-filter').innerHTML,/history-source:two/);context.historyBankId='history-source:two';context.historyQuestion='';context.history();await click();assert.deepEqual(Array.from(exported.runIds),['foreign']);assert.equal(exported.standings.questions.length,1);
+ context.historyQuestion=context.EvalStandings.questionKey(run('foreign-old','two','v0'));context.history();await click();assert.deepEqual(Array.from(exported.runIds),['foreign-old']);assert.equal(exported.standings.questions.length,1);
+ assert.equal(context.state.banks.length,1,'historical view must not add a runnable bank');
 });
 
 test('draft listing excludes published versions while preserving later drafts and calibration bytes',async()=>{

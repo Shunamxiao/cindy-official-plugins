@@ -1,4 +1,6 @@
 const english={
+'未关联题库':'Unlinked bank',
+'题库已不在当前目录；旧成绩按原来源单独保留，请选择题目版本查看，不与新题库合并。':'This bank is no longer in the current catalog. Its results remain separate under their original source. Choose a question version to view; results are not merged into a new bank.',
 'Cindy 实战题库':'Cindy Practical Evaluation Bank',
 '草稿材料缺失或不完整，请重新选择材料创建题目；原文件保留，尚未派发出题任务。':'Draft materials are missing or incomplete. Select materials to create a new question. Original files are preserved; no authoring task has been dispatched.',
 '校准未通过，请检查校准报告并修正草稿后重试。':'Calibration failed. Check its report, correct the draft and retry.',
