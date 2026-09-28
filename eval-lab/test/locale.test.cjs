@@ -90,8 +90,8 @@ test('pending Host locale keeps dynamic bank and export consistent with static p
   vm.runInNewContext(view.slice(view.indexOf('async function refresh(){'),view.indexOf('\nfunction bind(')),context);
   vm.runInNewContext(view.match(/^bind\('#export'.*$/m)[0],context);
   for(let i=0;i<2;i++){await context.refresh();await exportAction();assert.equal(context.state.banks[0].name,'Cindy 实战题库');assert.equal(calls.at(-1).args.standings.title,'Cindy 实战题库');assert.equal(context.tr('开始测试'),label.textContent);}
-  finish();await context.window.evalLocaleReady;await context.refresh();await exportAction();
+  finish();await context.window.evalLocaleReady;context.renderBankSelector();await exportAction();
   const expected=locale==='zh-CN'?'Cindy 实战题库':'Cindy Practical Evaluation Bank';
-  assert.equal(context.state.banks[0].name,expected);assert.equal(calls.at(-1).args.standings.title,expected);assert.equal(context.tr('开始测试'),label.textContent);
+  assert.equal(context.state.banks[0].name,expected);assert.ok($('#bank').innerHTML.includes(expected));assert.equal(calls.at(-1).args.standings.title,expected);assert.equal(context.tr('开始测试'),label.textContent);
  }
 });

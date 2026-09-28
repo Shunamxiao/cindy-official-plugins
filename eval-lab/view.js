@@ -27,12 +27,14 @@ function history(){
  const selectedBank=state.banks.find(b=>b.id===historyBankId)||state.banks[0];
  $('#history-filter').innerHTML=state.banks.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('');$('#history-filter').value=selectedBank?.id||'';
  const current=(selectedBank?.questions||[]).map(q=>({...q,questionId:q.questionId||q.key.split(':').pop().split('@')[0]}));
+ const sources=new Set(current.flatMap(q=>q.sourceKeys||[q.sourceKey]).filter(Boolean));
+ const runs=state.runs.filter(r=>r.sourceKey&&sources.has(r.sourceKey));
  const ids=new Set(current.map(q=>q.questionId));const versions=new Map(current.map(q=>[EvalStandings.questionKey(q),q]));
- for(const r of state.runs)if(ids.has(r.questionId)&&!versions.has(EvalStandings.questionKey(r)))versions.set(EvalStandings.questionKey(r),{questionId:r.questionId,title:r.question,revision:r.revision,releaseHash:r.releaseHash,distributionHash:r.distributionHash});
+ for(const r of runs)if(ids.has(r.questionId)&&!versions.has(EvalStandings.questionKey(r)))versions.set(EvalStandings.questionKey(r),{questionId:r.questionId,title:r.question,revision:r.revision,releaseHash:r.releaseHash,distributionHash:r.distributionHash});
  $('#history-question').innerHTML=`<option value="">${tr('全部现行题目')}</option>`+[...versions].map(([k,q])=>`<option value="${esc(k)}">${esc(q.title)} · ${esc(q.revision)}${current.some(c=>EvalStandings.questionKey(c)===k)?'':' · '+tr('历史版本')}${q.distributionHash?' · '+esc(q.distributionHash.slice(0,6)):''}</option>`).join('');
  if(!versions.has(historyQuestion))historyQuestion='';$('#history-question').value=historyQuestion;
  standingsQuestions=historyQuestion?[versions.get(historyQuestion)]:current;
- const eligible=state.runs.filter(r=>standingsQuestions.some(q=>EvalStandings.questionKey(q)===EvalStandings.questionKey(r)));
+ const eligible=runs.filter(r=>standingsQuestions.some(q=>EvalStandings.questionKey(q)===EvalStandings.questionKey(r)));
  const batches=new Map();for(const r of eligible){const k=r.batchId||r.runId;if(!batches.has(k))batches.set(k,[]);batches.get(k).push(r);}
  $('#history-batch').innerHTML=`<option value="">${tr('全部测试')}</option>`+[...batches].sort((a,b)=>Math.max(...b[1].map(EvalStandings.stamp))-Math.max(...a[1].map(EvalStandings.stamp))).map(([k,rs])=>`<option value="${esc(k)}">${esc(dateText(Math.max(...rs.map(EvalStandings.stamp))))} · ${rs.length} ${tr('份记录')} · ${esc(k.slice(0,8))}</option>`).join('');
  if(!batches.has(historyBatch))historyBatch='';$('#history-batch').value=historyBatch;
@@ -72,7 +74,7 @@ function renderJob(){
  $('#job').hidden=!(['running','needs_attention'].includes(j.status)&&j.phase==='blocked');$('#cancel').hidden=terminal;$('#cancel').disabled=j.status==='stopping';$('#view-results').hidden=finished===0;$('#new-run').hidden=!terminal;
 }
 
-async function refresh(){if(refreshing)return;refreshing=true;try{const s=await rpc('status');const previousModels=state.models;state={...state,...s};state.banks=(s.banks||[{id:'default',questions:s.bank?.questions||[]}]).map(b=>b.id==='default'?{...b,name:tr('Cindy 实战题库')}:b);if(!bank())bankId=state.banks[0]?.id||'default';$('#bank').innerHTML=state.banks.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')+`<option value="create">＋ ${tr('创建自己的题库')}</option>`;$('#bank').value=bankId;$('#bank-description').textContent=bank()?.error?tr(bank().error):`${bank()?.questions.length||0} ${tr('道题')} · ${tr('自主查错，独立验收')}`;
+async function refresh(){if(refreshing)return;refreshing=true;try{const s=await rpc('status');const previousModels=state.models;state={...state,...s};state.banks=(s.banks||[{id:'default',questions:s.bank?.questions||[]}]).map(b=>b.id==='default'?{...b,get name(){return tr('Cindy 实战题库');}}:b);if(!bank())bankId=state.banks[0]?.id||'default';renderBankSelector();$('#bank-description').textContent=bank()?.error?tr(bank().error):`${bank()?.questions.length||0} ${tr('道题')} · ${tr('自主查错，独立验收')}`;
  const stamp=JSON.stringify(state.models);if(stamp!==modelStamp){const retained=new Map(previousModels.map((m,i)=>[JSON.stringify([m.provider,m.harness,m.model]),picks.get(i)]));picks.clear();state.models.forEach((m,i)=>{const old=retained.get(JSON.stringify([m.provider,m.harness,m.model]));if(old){const valid=new Set([...old].filter(e=>m.efforts.includes(e)));if(valid.size)picks.set(i,valid);}});modelStamp=stamp;renderModels();}summary();history();renderJob();$('#model-note').textContent=tr(state.modelError||'已显示当前已连接的模型和强度，读取不产生模型费用。');
  $('#setup-state').textContent=tr(s.automaticRoot?'资料保存在插件默认位置，无需选择目录。':'正在使用你选择的保存位置。');if(!$('#bank-url').value)$('#bank-url').value=s.indexUrl||'';
  $('#check-id').innerHTML=state.drafts.map(d=>`<option value="${esc(d.checkId)}" ${d.passed?'':'disabled'}>${esc(d.id)} · ${esc(d.revision)} ${d.passed?'✓':tr('校准未通过')}</option>`).join('');$('#freeze-section').hidden=!state.drafts.length;$('#freeze').disabled=!state.drafts.some(d=>d.passed);const passed=state.drafts.find(d=>d.passed);if(passed)$('#check-id').value=passed.checkId;
@@ -80,6 +82,7 @@ async function refresh(){if(refreshing)return;refreshing=true;try{const s=await 
  $('#resume-author').hidden=!state.author?.canResume;
  if(state.author?.error)message(tr('出题未完成，请查看出题任务并检查草稿；已有成绩保留。')+' '+tr(state.author.error));
  }finally{refreshing=false;}}
+function renderBankSelector(){$('#bank').innerHTML=state.banks.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')+`<option value="create">＋ ${tr('创建自己的题库')}</option>`;$('#bank').value=bankId;}
 function bind(selector,fn){$(selector).onclick=async()=>{const b=$(selector);b.disabled=true;try{await fn();}catch(e){message(e.message);const dialog=b.closest('dialog');if(dialog)dialog.querySelector('[role=status]')?.replaceChildren(document.createTextNode(e.message));}finally{b.disabled=false;summary();if(selector==='#export')b.disabled=!standingsRows.some(r=>r.attempts);}};}
 function tab(id){for(const b of document.querySelectorAll('[role=tab]')){const yes=b.id===id;b.setAttribute('aria-selected',yes);b.tabIndex=yes?0:-1;$('#'+b.getAttribute('aria-controls')).hidden=!yes;}}
 for(const b of document.querySelectorAll('[role=tab]')){b.onclick=()=>tab(b.id);b.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const other=$('#'+(b.id==='tab-run'?'tab-history':'tab-run'));tab(other.id);other.focus();}};}tab('tab-run');
@@ -107,7 +110,7 @@ bind('#online-check',async()=>{const url=$('#bank-url').value.trim(),r=await rpc
 bind('#online-download',async()=>{const qs=[...document.querySelectorAll('[name=online-question]:checked')].map(e=>e.value);if(!onlineIndex||!qs.length)throw Error('请先检查题库并选择题目');for(const question of qs)await rpc('online_install',{indexId:onlineIndex,question});await refresh();message('题库已下载并校验，可离线运行。');});
 async function syncProgress(){if(document.hidden)return;try{await refresh();}catch(e){$('#sync-state').textContent=tr('连接暂时中断，正在自动重连；已有进度保留。');if(!state.job)message(e.message);}}
 syncProgress();setInterval(syncProgress,5000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncProgress();});window.addEventListener('online',syncProgress);window.addEventListener('focus',syncProgress);
-window.evalLocaleReady.then(()=>{renderModels();summary();history();renderJob();syncProgress();});
+window.evalLocaleReady.then(()=>{renderBankSelector();renderModels();summary();history();renderJob();syncProgress();});
 
 function downloadProgress(p){
  const panel=$('#download-panel'),meter=$('#download-meter'),cancel=$('#download-cancel');

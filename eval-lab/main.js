@@ -371,7 +371,8 @@ async function questionCatalog(){
  try{current=(await node('online_cached',{url:c.indexUrl||DEFAULT_INDEX})).questions||[];}catch(e){catalogError=e.message;}
  const defaults=(await defaultCatalog).map(d=>{
   const version=current.find(q=>q.key===d.key),installed=version&&bank.questions.find(q=>q.key===version.installedKey);
-  return {...d,...(version||{}),key:d.key,installedKey:installed?.key,unresolved:!version,cached:!!version};
+  const sourceKeys=bank.questions.filter(q=>q.questionId===(version?.questionId||d.key.split('@')[0])&&(q.key===installed?.key||q.sourceIndexUrl===(c.indexUrl||DEFAULT_INDEX))).map(q=>q.sourceKey).filter(Boolean);
+  return {...d,...(version||{}),sourceKeys:[...new Set(sourceKeys)],key:d.key,installedKey:installed?.key,unresolved:!version,cached:!!version};
  });
  return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.installedKey))],defaults};
 }

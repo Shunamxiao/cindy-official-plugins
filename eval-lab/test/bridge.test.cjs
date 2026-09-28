@@ -813,3 +813,11 @@ test('all draft creation entries preserve failed but recoverable author ownershi
   assert.equal(JSON.stringify(b.config.author),before);assert.equal(b.calls.some(x=>x.method==='draft'||x.create||x.send),false);
  }
 });
+
+test('default history sources use exact index URL or current installed key, not matching question IDs',async()=>{
+ const url='https://github.com/makecindy/eval-bank/releases/download/v1/index.json',b=bridge({indexUrl:url}),request=b.cindy.node.request;
+ const q=(tag,sourceIndexUrl)=>({key:'online:'+tag+':audio@v2',questionId:'audio',revision:'v2',sourceKey:tag,sourceIndexUrl});
+ const questions=[q('old',url),q('current','https://github.com/makecindy/other/releases/download/v1/index.json'),q('foreign','https://github.com/makecindy/eval-bank/releases/download/v2/index.json'),{...q('imported'),key:'imported:a:audio@v2'}];
+ b.cindy.node.request=async x=>x.method==='bank'?{ok:true,result:{questions}}:x.method==='online_cached'?{ok:true,result:{questions:[{key:'audio@v2',questionId:'audio',installedKey:questions[1].key}]}}:request(x);
+ await b.ui('sources','status');const defaults=b.replies.at(-1).result.banks[0];assert.deepEqual(Array.from(defaults.questions[0].sourceKeys),['old','current']);
+});
