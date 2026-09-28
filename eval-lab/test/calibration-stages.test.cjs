@@ -1,5 +1,24 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch}=require('../node/engine.cjs');
+test('spawn failure receipts remain readable and finish without re-executing',()=>fixture(async(root)=>{
+ const cp=require('node:child_process'),spawn=cp.spawn;
+ const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId};
+ let starts=0;cp.spawn=(command,args,options)=>{starts++;return spawn(path.join(root,'missing-python'),args,options);};
+ try{for(let step=0;step<3;step++)assert.equal((await dispatch('calibrate_step',{...p,step})).status,'environment_invalid');}finally{cp.spawn=spawn;}
+ const folder=path.join(root,'eval-lab-data/calibrations',checkId);
+ const file=path.join(folder,'step-0.json'),value=JSON.parse(await fs.readFile(file,'utf8'));
+ assert.equal(value.execution.timedOut,false);assert.equal(starts,3);
+ // Old versions wrote this exact spawn-error shape, without timedOut.
+ value.execution={code:null,error:value.execution.error};await fs.writeFile(file,JSON.stringify(value));
+ await fs.rename(file,path.join(folder,'attempt-0/receipt.json'));
+ assert.equal((await dispatch('calibrate_step',{...p,step:0})).status,'environment_invalid');
+ assert.equal((await dispatch('calibrate_step',{...p,step:1})).status,'environment_invalid');
+ assert.equal((await dispatch('calibrate_finish',p)).ok,false);
+ assert.equal((await dispatch('calibrate_finish',p)).ok,false);
+ value.status='graded';value.raw={status:'graded',items:{a:false}};value.score=0;value.scoreExact='0';
+ await fs.writeFile(file,JSON.stringify(value));
+ await assert.rejects(dispatch('calibrate_step',{...p,step:0}),/receipt mismatch/);
+}));
 test('completed unpublished calibration receipt recovers without executing the grader again',()=>fixture(async(root)=>{
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
  const result=await dispatch('calibrate_step',p),folder=path.join(root,'eval-lab-data/calibrations',checkId);

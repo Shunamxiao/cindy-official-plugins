@@ -1,5 +1,24 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),crypto=require('node:crypto');
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
+test('stop after plan publication does not start an idle coordinator',async()=>{
+ const b=bridge(),request=b.cindy.node.request;let enter,release;
+ const ready=new Promise(r=>enter=r),held=new Promise(r=>release=r);
+ b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[]});
+ b.cindy.node.request=async x=>{if(x.method==='coordinator_state'){enter();await held;}return request(x);};
+ const start=b.ui('start','start',args);await ready;await b.ui('stop','cancel');release();await start;
+ assert.ok(b.config.batch.plan);assert.equal(b.config.batch.status,'cancelled');assert.equal(b.calls.filter(x=>x.send).length,0);
+});
+test('stop cannot declare unstarted when receipt lookup fails or finds a later page',async()=>{
+ for(const mode of ['failure','accepted']){
+  const b=bridge(),request=b.cindy.node.request;let enter,release;
+  const ready=new Promise(r=>enter=r),held=new Promise(r=>release=r);
+  b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[]});
+  b.cindy.tasks.listRuns=async x=>{if(mode==='failure')throw Error('receipt unavailable');return x.after?{items:[{status:'running'}]}:{items:[],nextCursor:'next'};};
+  b.cindy.node.request=async x=>{if(x.method==='coordinator_state'){enter();await held;}return request(x);};
+  const start=b.ui('start','start',args);await ready;await b.ui('stop','cancel');release();await start;
+  assert.notEqual(b.config.batch.status,'cancelled');assert.equal(b.calls.filter(x=>x.send).length,mode==='accepted'?1:0);
+ }
+});
 test('known missing draft input releases authoring without creating a task or replaying the old identity',async()=>{
  const b=bridge({root:'/selected',author:{id:'broken',revision:'v1',status:'drafting'}}),request=b.cindy.node.request;
  b.cindy.node.request=async x=>x.method==='draft'&&x.params.id==='broken'?{ok:true,result:{status:'input_required'}}:request(x);
@@ -46,6 +65,7 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  let onMessage,bc,cfg=structuredClone(initial);const calls=[],replies=[],runs=new Map(),tasks=new Map();let sequence=0;
  const cindy={downloads:{start:async()=>({ok:true,token:'fixture'})},library:async x=>{if(x.op==='write'){cfg=JSON.parse(x.content);return {ok:true};}return {ok:true,content:JSON.stringify(cfg)};},node:{request:async x=>{calls.push(x);let result={ok:true};if(x.method==='author_stage')result={directory:x.params.workspace+'/author'};if(x.method==='defaults')result={root:'/automatic'};if(x.method==='bank')result={questions:[{key:'online:fixture:audio@v2'}]};if(['online_inspect','online_cached'].includes(x.method))result={indexId:'fixture',questions:[{key:'audio@v2',installedKey:'online:fixture:audio@v2'}]};if(x.method==='online_plan')result={artifacts:[]};if(x.method==='online_begin')result={operationId:'install-fixture'};if(x.method==='online_install')result={bank:'/bank/fixture',key:'audio@v2'};if(x.method==='grade'||x.method==='reconcile_result')result={status:'graded',scoreExact:'1'};if(x.method==='coordinator_state')result={path:'/state.json'};if(x.method==='coordinator_plan')result={workspace:x.params.workspace,path:x.params.workspace+'/plan.json',prompt:'Coordinate the plan.'};if(['runs','drafts'].includes(x.method))result=[];if(x.method==='prepare')result={runId:x.params.runId,workspace:x.params.workspace||'/answers/'+x.params.runId,prompt:'Read TASK.md and verify.'};return {ok:true,result};}},tasks:{
  capabilities:async()=>({operations:['create','send','getRun']}),
+ listRuns:async x=>({items:[...runs.values()].filter(r=>r.taskId===x.taskId)}),
  create:async x=>{calls.push({create:x});const task={taskId:'t'+(++sequence),revision:1,resolvedConfig:x.route,workingDir:'/isolated/'+sequence,permissionMode:'auto'};tasks.set(task.taskId,task);return task;},
  setTeamPlan:async x=>{calls.push({setTeamPlan:x});return {ok:true};},releaseWorker:async x=>{calls.push({releaseWorker:x});return {ok:true};},get:async x=>tasks.get(x.taskId),startTeam:async()=>({ok:true,teamId:'team'}),getTeam:async()=>({ok:true,leadWorking:true,workers:[]}),
  send:async x=>{calls.push({send:x});const route=tasks.get(x.taskId)?.resolvedConfig;const run={runId:'r'+sequence,taskId:x.taskId,status:'running',acceptedConfig:route,acceptedAt:1,execution:{instanceId:'native',generation:1}};runs.set(run.runId,run);return run;},

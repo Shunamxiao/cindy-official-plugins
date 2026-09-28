@@ -19,7 +19,7 @@ async function runCommand(command,args,{cwd,timeout=840000,signal}={}){
   const cleanup=()=>{clearTimeout(timer);signal?.removeEventListener('abort',kill);};
   signal?.addEventListener('abort',kill,{once:true});if(signal?.aborted)kill();
   p.stdout.on('data',d=>out=(out+d).slice(-100000));p.stderr.on('data',d=>err=(err+d).slice(-100000));
-  p.on('error',e=>{cleanup();resolve({code:null,error:e.message});});
+  p.on('error',e=>{cleanup();resolve({code:null,error:e.message,timedOut,stdout:out,stderr:err});});
   // Wait for close before callers remove staging files the child may be writing.
   p.on('close',(code,exitSignal)=>{cleanup();resolve({code,signal:exitSignal,timedOut,stdout:out,stderr:err});});
  });

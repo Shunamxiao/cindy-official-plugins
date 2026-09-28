@@ -4,7 +4,10 @@ const names=['candidate','reference','controls/incomplete'];
 const publicStep=({name,status,scoreExact})=>({name,status,scoreExact});
 module.exports=function calibration({base,within,files,read,write,id,validateSpec,score,runCommand,draftDirectory=async p=>within(await base(p.root),'drafts/'+id(p.id)+'/'+id(p.revision))}){
  function receipt(result,name,spec){
-  if(result?.name!==name||typeof result.execution?.timedOut!=='boolean'||!(result.execution.code===null||Number.isInteger(result.execution.code))||!['graded','environment_invalid'].includes(result.status)||result.raw?.status!==result.status)throw Error('Calibration receipt mismatch');
+  // Earlier spawn failures omitted timedOut. Accept only that ungraded error
+  // shape; preserve its bytes so recovery and finish remain idempotent.
+  const execution=result?.execution,legacySpawnFailure=result?.status==='environment_invalid'&&execution?.code===null&&typeof execution.error==='string'&&execution.error.length>0&&!Object.hasOwn(execution,'timedOut');
+  if(result?.name!==name||(!legacySpawnFailure&&typeof execution?.timedOut!=='boolean')||!(execution.code===null||Number.isInteger(execution.code))||!['graded','environment_invalid'].includes(result.status)||result.raw?.status!==result.status)throw Error('Calibration receipt mismatch');
   if(result.status==='graded'){
    const calculated=score(spec,result.raw.items);
    if(result.execution.code!==0||result.execution.timedOut||result.score!==calculated.value||result.scoreExact!==calculated.exact)throw Error('Calibration receipt mismatch');

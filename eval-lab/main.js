@@ -279,6 +279,15 @@ async function assessLegacyCompletion(j,item,run){
  applyAssessment(item,await node('grade',{runId:item.runId,receipt:{channel:'Cindy task',sessionId:run.taskId,runId:run.runId,completedAt:new Date(run.completedAt).toISOString(),acceptedAt:run.acceptedAt,execution:run.execution,acceptedConfig:run.acceptedConfig,outputMessageId:run.outputMessageId}}));
  await saveBatch(j);
 }
+async function coordinatorRuns(taskId){
+ let after,count=0,ended=true;const cursors=new Set();
+ do{const page=await cindy.tasks.listRuns({taskId,...(after?{after}:{})});
+  if(!Array.isArray(page.items))throw Error('无法核对主任务执行回执');
+  count+=page.items.length;ended=ended&&page.items.every(terminalRun);after=page.nextCursor;
+  if(after&&cursors.has(after))throw Error('主任务回执分页未完成');if(after)cursors.add(after);
+ }while(after);
+ return {count,ended};
+}
 async function stopBatch(j){
  if(j.mode!=='coordinator'){
   j.status='stopping';j.phase='stopping';await saveBatch(j);
@@ -289,7 +298,14 @@ async function stopBatch(j){
   }
   j.status=pending?'stopping':'cancelled';j.phase=j.status;j.message=pending?'等待任务停止回执；已完成成绩保留。':'评测已停止，已完成成绩保留。';await saveBatch(j);return jobView(j);
  }
- if(!j.controlRun&&!j.plan){j.status='cancelled';j.phase='cancelled';j.message='已停止准备，没有派发新的作答。';for(const i of j.items.filter(x=>!doneItem(x)))i.status='cancelled';await saveBatch(j);return jobView(j);}
+ let unstarted=!j.controlRun&&!j.plan;
+ if(!j.controlRun&&j.plan){
+  // A missing local send response is not proof that Host never accepted it.
+  const runs=await coordinatorRuns(j.coordinator.taskId),team=await cindy.tasks.getTeam({taskId:j.coordinator.taskId});
+  if(!team.ok||!Array.isArray(team.workers))throw Error('无法核对协同状态');
+  unstarted=runs.count===0&&!team.leadWorking&&!team.waitingForUser&&team.workers.length===0;
+ }
+ if(unstarted){j.status='cancelled';j.phase='cancelled';j.message='已停止准备，没有派发新的作答。';for(const i of j.items.filter(x=>!doneItem(x)))i.status='cancelled';await saveBatch(j);return jobView(j);}
  j.status='stopping';j.phase='stopping';j.message='正在停止评测，已完成的作答和成绩保留。';await saveBatch(j);
  let task=await cindy.tasks.get({taskId:j.coordinator.taskId});
  if(!j.stopSent&&task.status!=='archived'){
@@ -301,13 +317,7 @@ async function stopBatch(j){
  else if(task.status==='archived'){
   // An archived task cannot accept stop input. Observe all accepted receipts,
   // including a start whose response was lost; never replay start to discover it.
-  let after,count=0;const cursors=new Set();ended=true;
-  do{const page=await cindy.tasks.listRuns({taskId:j.coordinator.taskId,...(after?{after}:{})});
-   if(!Array.isArray(page.items))throw Error('无法核对主任务执行回执');
-   count+=page.items.length;ended=ended&&page.items.every(terminalRun);after=page.nextCursor;
-   if(after&&cursors.has(after))throw Error('主任务回执分页未完成');if(after)cursors.add(after);
-  }while(after);
-  ended=ended&&count>0;
+  const runs=await coordinatorRuns(j.coordinator.taskId);ended=runs.ended&&runs.count>0;
  }
  const team=await cindy.tasks.getTeam({taskId:j.coordinator.taskId});
  if(!team.ok)throw Error('无法核对协同状态');
