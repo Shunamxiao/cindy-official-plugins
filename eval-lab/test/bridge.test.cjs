@@ -13,6 +13,21 @@ function bridge(initial={root:'/selected'},catalog={ok:true,models:[{id:'test-mo
  return {calls,replies,runs,get config(){return cfg;},tool:m=>onMessage(m),ui:(id,action,args={})=>bc.onmessage({data:{type:'request',id,action,args}}),cindy};
 }
 const args={questions:['audio@v2'],configurations:[configuration]};
+test('legacy completed receipts preserve environment-invalid grades across recovery without regrading',async()=>{
+ for(const status of ['environment_invalid','graded']){
+  const b=bridge({root:'/selected',batch:{id:'legacy',status:'running',items:[{runId:'answer',question:'audio@v2',config:configuration,status:'running',error:'old error',task:{taskId:'t'},hostRun:{runId:'host'}}]}});
+  b.runs.set('host',{runId:'host',taskId:'t',status:'completed',completedAt:2000,acceptedAt:1000,execution:{instanceId:'native',generation:1},acceptedConfig:{agentKind:'codex',model:'test-model',providerId:'own-account',effort:'high',fastMode:false}});
+  const request=b.cindy.node.request;let grades=0;
+  b.cindy.node.request=async x=>{if(x.method==='grade'){grades++;return {ok:true,result:{status,...(status==='environment_invalid'?{reason:'preflight blocked'}:{scoreExact:'1'})}};}return request(x);};
+  await b.ui('recover','query');
+  assert.equal(b.config.batch.items[0].status,status);
+  assert.equal(b.config.batch.items[0].error,status==='environment_invalid'?'preflight blocked':undefined);
+  assert.equal(b.config.batch.status,'completed');
+  const recovered=bridge(b.config);await recovered.ui('again','query');await b.ui('again','query');
+  assert.equal(grades,1);assert.equal(recovered.calls.some(x=>x.method==='grade'||x.send),false);
+  assert.equal(recovered.config.batch.items[0].status,status);
+ }
+});
 test('oversized batches fail before any question download or installation',async()=>{
  const b=bridge();await b.ui('large','start',{questions:Array.from({length:201},(_,i)=>'question-'+i),configurations:[configuration]});
  assert.equal(b.replies.find(x=>x.id==='large').ok,false);

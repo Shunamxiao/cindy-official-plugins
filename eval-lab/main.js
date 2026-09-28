@@ -1,3 +1,6 @@
+function applyAssessment(item,result,fallback='graded'){
+ item.result=result;item.status=result.status==='environment_invalid'?'environment_invalid':fallback;item.error=result.reason||undefined;
+}
 async function settleWorkers(j,team){
   let unavailable;
   for(const item of j.items){const w=team.workers.find(w=>w.label===workerLabel(item.runId));if(w)item.telemetry={acceptedAt:w.acceptedAt,startedAt:w.startedAt,completedAt:workerCompletedAt(w),timingBasis:w.timingBasis,usage:w.usage};}
@@ -13,7 +16,7 @@ async function settleWorkers(j,team){
    if(workerCompletedAt(w)&&w.status==='done'&&!workerPending(w)){
     try{if(unavailable)throw unavailable;await evaluationPreflight();}catch(e){unavailable=e;item.status='completed';continue;}
     j.phase='grading';j.currentRunId=item.runId;await saveBatch(j);channel.postMessage({type:'job-progress',job:jobView(j)});
-    try{item.result=await node('grade',{runId:item.runId,receipt:{channel:'Orca Worker',sessionId:w.session_id,workerId:w.worker_id,...item.telemetry,completedAt:item.telemetry.completedAt,acceptedConfig:cfg,provenance:'host-team-observed'}});item.status=item.result.status==='environment_invalid'?'environment_invalid':'graded';item.error=item.result.reason||undefined;}
+    try{applyAssessment(item,await node('grade',{runId:item.runId,receipt:{channel:'Orca Worker',sessionId:w.session_id,workerId:w.worker_id,...item.telemetry,completedAt:item.telemetry.completedAt,acceptedConfig:cfg,provenance:'host-team-observed'}}));}
     catch(e){if(isTransientReadError(e))throw e;item.status='blocked';item.error='评分受阻：'+e.message;}
    }else if(w.status==='error'){item.status='blocked';item.error='Worker 异常结束，保留作答，未计分';}
    else {item.status=w.waitingForUser?'awaiting_confirmation':w.queue_paused?'queue_paused':w.is_working?'running':w.queued_count?'queued':'pending';item.waitReason=w.waitingForUser?'等待自动审批或用户确认':w.queue_paused?'队列已暂停':w.is_working?'模型正在执行':w.queued_count?'宿主排队中':'等待终态核对';}
@@ -21,7 +24,7 @@ async function settleWorkers(j,team){
   delete j.currentRunId;
   // Reconcile historical assessments before releasing their sessions; never delete raw grades.
   for(const item of j.items.filter(x=>doneItem(x)||x.status==='blocked')){
-   if(item.result&&!item.qualityReviewed){try{item.result=await node('reconcile_result',{runId:item.runId,receipt:item.telemetry});item.status=item.result.status==='environment_invalid'?'environment_invalid':item.status;item.error=item.result.reason||undefined;item.qualityReviewed=true;delete item.qualityReviewError;}catch(e){item.qualityReviewError='诊断复核暂未完成：'+e.message;}await saveBatch(j);}
+   if(item.result&&!item.qualityReviewed){try{applyAssessment(item,await node('reconcile_result',{runId:item.runId,receipt:item.telemetry}),item.status);item.qualityReviewed=true;delete item.qualityReviewError;}catch(e){item.qualityReviewError='诊断复核暂未完成：'+e.message;}await saveBatch(j);}
    const matches=team.workers.filter(w=>w.label===workerLabel(item.runId));
    const w=matches.length===1?matches[0]:null;
    if(j.status==='stopping'&&w?.status==='done'&&!item.result)continue;
@@ -328,8 +331,7 @@ async function advanceBatchOnce(){
    if(!run.execution||!run.completedAt)throw Error('完成回执缺少执行身份，暂不评分');
    await evaluationPreflight();
    j.phase='grading';await saveBatch(j);channel.postMessage({type:'job-progress',job:jobView(j)});
-   item.result=await node('grade',{runId:item.runId,receipt:{channel:'Cindy task',sessionId:run.taskId,runId:run.runId,completedAt:new Date(run.completedAt).toISOString(),acceptedAt:run.acceptedAt,execution:run.execution,acceptedConfig:run.acceptedConfig,outputMessageId:run.outputMessageId}});
-   item.status='graded';delete item.error;
+   applyAssessment(item,await node('grade',{runId:item.runId,receipt:{channel:'Cindy task',sessionId:run.taskId,runId:run.runId,completedAt:new Date(run.completedAt).toISOString(),acceptedAt:run.acceptedAt,execution:run.execution,acceptedConfig:run.acceptedConfig,outputMessageId:run.outputMessageId}}));
   }else if(['failed','cancelled','interrupted'].includes(run.status)){item.status=run.status==='cancelled'?'cancelled':'failed';item.error=run.error||'任务结束但未完成交卷，未计分';}
   else if(run.status==='reconciling'){item.error='宿主正在核对执行结果；不会重复发送，也不会计为零分。';}
   j.message=item.error||'';
