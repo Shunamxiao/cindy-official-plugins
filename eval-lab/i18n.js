@@ -1,4 +1,5 @@
 const english={
+'下载已取消':'Download cancelled',
 '未关联题库':'Unlinked bank',
 '题库已不在当前目录；旧成绩按原来源单独保留，请选择题目版本查看，不与新题库合并。':'This bank is no longer in the current catalog. Its results remain separate under their original source. Choose a question version to view; results are not merged into a new bank.',
 'Cindy 实战题库':'Cindy Practical Evaluation Bank',

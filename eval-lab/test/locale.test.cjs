@@ -104,3 +104,22 @@ test('pending Host locale keeps dynamic bank and export consistent with static p
   for(const locale of ['zh-CN','en','ja','ko']){const {html}=await dispatch('export',{root,runIds:['sample'],locale});assert.ok(html.includes(translate(locale,label)),status+': '+locale);assert.ok(!html.includes('>'+status+'<'));assert.doesNotMatch(html,/0 \/ 1/);}
  }}finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('refresh preserves the selected eligible draft and falls back when it disappears or fails',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),code=fs.readFileSync(require('node:path').join(__dirname,'../view.js'),'utf8');
+ const elements=new Map(),calls=[],$=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);};
+ let drafts=[{checkId:'first',id:'a',revision:'v1',passed:true},{checkId:'second',id:'b',revision:'v1',passed:true}];
+ const context={$,refreshing:false,state:{models:[]},bankId:'default',modelStamp:'[]',picks:new Map(),tr:x=>x,esc:String,summary(){},history(){},renderJob(){},renderModels(){},message(){},rpc:async()=>({banks:[],models:[],drafts,runs:[]})};
+ context.bank=()=>context.state.banks[0];
+ vm.runInNewContext(code.slice(code.indexOf('async function refresh(){'),code.indexOf('\nfunction bind(')),context);
+ await context.refresh();assert.equal($('#check-id').value,'first');$('#check-id').value='second';
+ await context.refresh();assert.equal($('#check-id').value,'second');
+ drafts[1].passed=false;await context.refresh();assert.equal($('#check-id').value,'first');
+ drafts= drafts.slice(1);await context.refresh();assert.equal($('#check-id').value,'');assert.equal($('#freeze').disabled,true);
+ drafts[0].passed=true;await context.refresh();assert.equal($('#check-id').value,'second');
+ drafts=[];await context.refresh();assert.equal($('#check-id').value,'');assert.equal($('#freeze-section').hidden,true);
+});
+test('download cancellation messages use the shared locale fallback',()=>{
+ for(const locale of ['en','ja','ko'])assert.equal(translate(locale,'下载已取消'),'Download cancelled');
+ assert.equal(translate('zh-CN','下载已取消'),'下载已取消');
+});
