@@ -437,10 +437,15 @@ async function checkAuthor(){
  authorChecking=true;try{const r=await cindy.tasks.getRun({runId:a.runId});delete a.error;a.status=r.status;if(r.status==='completed'){await collectAuthor(a,r);Object.assign(a,calibrationState(await node('calibrate',{id:a.id,revision:a.revision})));}else if(['failed','cancelled','interrupted'].includes(r.status))a.status='failed';await updateConfig(c=>({...c,author:a}));}catch(e){await updateConfig(c=>({...c,author:{...a,...(a.status==='completed'?{status:'failed'}:{}),error:e.message}}));}finally{authorChecking=false;}
 }
 let launching=false,launchCancelled=false,authorStarting=false;
+async function authorPending(a){
+ if(!a||a.status==='calibrated')return false;
+ if(a.status!=='failed'||a.calibration)return true;
+ if(a.runId){const run=await cindy.tasks.getRun({runId:a.runId});return !['failed','cancelled','interrupted'].includes(run?.status);}
+ return false;
+}
 async function assertRootChangeAllowed(c){
  if(downloadBusy)throw Error('题库正在准备，请稍候');
- let authorActive=c.author&&!['calibrated','failed'].includes(c.author.status);
- if(c.author?.status==='failed'&&c.author.runId){const run=await cindy.tasks.getRun({runId:c.author.runId});authorActive=!['failed','cancelled','interrupted'].includes(run?.status);}
+ const authorActive=await authorPending(c.author);
  if(authorStarting||authorChecking||authorActive)throw Error('出题尚未结束，请完成出题和校准后再更改数据目录。');
  if(launching||['running','stopping'].includes(c.batch?.status))throw Error('评测尚未结束，请完成或停止评测后再更改数据目录。');
 }
@@ -521,6 +526,17 @@ async function action(name,args={},callId){
   authorStarting=true;
   try{
    const a=(await config()).author,matching=a&&a.id===args.id&&a.revision===args.revision;
+   if(name==='create_question_draft'){
+    if((a&&!matching&&!['calibrated','failed'].includes(a.status))||(matching&&(a.runId||a.pendingCreate||a.pendingSend)))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
+    await updateConfig(c=>({...c,author:{id:args.id,revision:args.revision,status:'drafting'}}));
+    const result=await node('draft',{...args,resume:!!matching},callId);
+    if(result.status==='input_required'){
+     const error='草稿材料缺失或不完整，请重新选择材料创建题目；原文件保留，尚未派发出题任务。';
+     await updateConfig(c=>({...c,author:{id:args.id,revision:args.revision,status:'failed',error}}));throw Error(error);
+    }
+    await updateConfig(c=>({...c,author:{...c.author,status:'completed'}}));
+    return result;
+   }
    if(name==='calibrate_question'&&matching&&a.handoff)await collectAuthor(a);
    const result=await node(name==='calibrate_question'?'calibrate':name==='create_question_draft'?'draft':'freeze',args,callId);
    if(name==='calibrate_question'&&matching)await updateConfig(c=>({...c,author:{...c.author,...calibrationState(result)}}));

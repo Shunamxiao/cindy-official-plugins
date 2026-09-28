@@ -1,5 +1,33 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),crypto=require('node:crypto');
 const configuration={model:'test-model',harness:'codex',provider:'own-account',effort:'high'};
+test('standalone draft retains root and identity across restart until calibration passes',async()=>{
+ const b=bridge({root:'/original'});
+ await b.tool({type:'tool-call',tool:'create_question_draft',callId:'draft',args:{id:'draft',revision:'v1',records:[{sessionId:'fixture',text:'selected'}]}});
+ assert.equal(b.config.author.id,'draft');assert.equal(b.calls.some(x=>x.create||x.send),false);
+ const restored=bridge(b.config),request=restored.cindy.node.request;restored.cindy.pick=async()=>({ok:true,path:'/new'});
+ await restored.ui('root','setup_root');assert.equal(restored.config.root,'/original');
+ for(const entry of ['author','create_question_draft']){
+  if(entry==='author')await restored.ui('other','author',{id:'other',revision:'v1'});
+  else await restored.tool({type:'tool-call',tool:entry,callId:'other',args:{id:'other',revision:'v1'}});
+  assert.equal(restored.config.author.id,'draft');
+ }
+ let ok=false;restored.cindy.node.request=async x=>x.method==='calibrate_finish'?{ok:true,result:{ok,checkId:'stable'}}:request(x);
+ await restored.tool({type:'tool-call',tool:'calibrate_question',callId:'fail',args:{id:'draft',revision:'v1'}});
+ assert.equal(restored.config.author.status,'failed');await restored.ui('failed-root','setup_root');assert.equal(restored.config.root,'/original');
+ ok=true;await restored.tool({type:'tool-call',tool:'calibrate_question',callId:'pass',args:{id:'draft',revision:'v1'}});
+ assert.equal(restored.calls.filter(x=>x.method==='calibrate_begin').every(x=>x.params.root==='/original'),true);
+ await restored.ui('allowed','setup_root');assert.equal(restored.config.root,'/new');
+});
+test('standalone lost draft response retains identity while definite missing input releases it',async()=>{
+ const b=bridge({root:'/original'}),request=b.cindy.node.request;
+ b.cindy.node.request=async x=>{if(x.method==='draft'){assert.equal(b.config.author.id,'draft');throw Error('response lost');}return request(x);};
+ await b.tool({type:'tool-call',tool:'create_question_draft',callId:'draft',args:{id:'draft',revision:'v1'}});
+ assert.equal(b.config.author.status,'drafting');b.cindy.pick=async()=>({ok:true,path:'/new'});
+ await b.ui('root','setup_root');assert.equal(b.config.root,'/original');
+ b.cindy.node.request=async x=>x.method==='draft'?{ok:true,result:{status:'input_required'}}:request(x);
+ await b.tool({type:'tool-call',tool:'create_question_draft',callId:'resume',args:{id:'draft',revision:'v1'}});
+ assert.equal(b.config.author.status,'failed');await b.ui('released','setup_root');assert.equal(b.config.root,'/new');
+});
 test('stop after plan publication does not start an idle coordinator',async()=>{
  const b=bridge(),request=b.cindy.node.request;let enter,release;
  const ready=new Promise(r=>enter=r),held=new Promise(r=>release=r);
@@ -705,14 +733,14 @@ test('legacy lost send receipt is read without Python or replay, including stop'
   assert.equal(b.calls.some(x=>x.send),false);
  }
 });
-test('standalone author tools fence root changes and release the existing guard on every outcome',async()=>{
+test('standalone author calls release the in-flight guard but retain unfinished draft ownership',async()=>{
  for(const tool of ['create_question_draft','calibrate_question','freeze'])for(const fail of [false,true]){
   const b=bridge({root:'/original'});let entered,release;const ready=new Promise(r=>entered=r),held=new Promise(r=>release=r);const request=b.cindy.node.request;
   b.cindy.node.request=async x=>{if(['draft','calibrate_begin','freeze'].includes(x.method)){entered();await held;if(fail)throw Error('write failed');}return request(x);};
   b.cindy.pick=async()=>({ok:true,path:'/new'});
   const work=b.tool({type:'tool-call',tool,callId:'tool',args:{id:'draft',revision:'v1'}});await ready;
   await b.ui('root','setup_root');assert.equal(b.replies.at(-1).ok,false);assert.equal(b.config.root,'/original');
-  release();await work;await b.ui('root2','setup_root');assert.equal(b.replies.at(-1).ok,true);
+  release();await work;await b.ui('root2','setup_root');assert.equal(b.replies.at(-1).ok,tool!=='create_question_draft');
  }
 });
 test('recoverable failed author stays bound until explicit calibration succeeds',async()=>{
