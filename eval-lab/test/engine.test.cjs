@@ -132,3 +132,32 @@ test('coordinator handoff preserves exact legacy membership and writes state ins
   for(const method of ['coordinator_plan','coordinator_state'])await assert.rejects(dispatch(method,{root,workspace:alias,id:'batch'}),/主任务目录/);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('JSON publication never exposes partial results or replaces a completed result',async()=>{
+ const {files}=require('../node/engine.cjs');
+ for(const failure of ['partial','cleanup','conflict']){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-result-publish-')),bank=path.join(root,'bank'),q=path.join(bank,'q');
+  const open=fs.open,writeFile=fs.writeFile,unlink=fs.unlink,link=fs.link;
+  try{
+   await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.mkdir(path.join(q,'author'));
+   await fs.writeFile(path.join(q,'candidate/a'),'paid answer');
+   await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));
+   await fs.writeFile(path.join(q,'author/grade.py'),"import sys,json\njson.dump({'status':'graded','items':{'a':True}},open(sys.argv[2],'w'))\n");
+   await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'fixture@v1',path:'q',files:await files(q)}]}));
+   const run=await dispatch('prepare',{root,bank,question:'fixture@v1',runId:'score',model:'m',provider:'p',harness:'h',effort:'e'}),dir=path.join(root,'eval-lab-data/runs/score'),target=path.join(dir,'result.json');
+   const winner=JSON.stringify({...run,status:'graded',score:0,scoreExact:'0/1'});
+   const isResult=p=>path.basename(String(p))==='result.json'||/^result-[0-9a-f-]+\.tmp$/.test(path.basename(String(p)));
+   if(failure==='partial'){
+    fs.writeFile=async(p,...args)=>{if(isResult(p)){await writeFile(p,'{partial',{flag:'wx'});throw Error('partial result');}return writeFile(p,...args);};
+    fs.open=async(...args)=>{const h=await open(...args);if(isResult(args[0]))h.writeFile=async()=>{await h.write('{partial');throw Error('partial result');};return h;};
+   }
+   if(failure==='cleanup')fs.unlink=async p=>{if(isResult(p))throw Error('cleanup unavailable');return unlink(p);};
+   if(failure==='conflict')fs.link=async(from,to)=>{if(path.basename(to)==='result.json')await writeFile(to,winner,{flag:'wx'});return link(from,to);};
+   const request={root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+   if(failure==='partial'){await assert.rejects(dispatch('grade',request),/partial result/);await assert.rejects(fs.access(target),{code:'ENOENT'});assert.equal((await dispatch('runs',{root}))[0].status,'prepared');}
+   if(failure==='cleanup'){assert.equal((await dispatch('grade',request)).score,1);assert.equal(JSON.parse(await fs.readFile(target)).score,1);}
+   if(failure==='conflict'){await assert.rejects(dispatch('grade',request),{code:'EEXIST'});assert.equal(await fs.readFile(target,'utf8'),winner);}
+   assert.equal(await fs.readFile(path.join(run.workspace,'a'),'utf8'),'paid answer');
+  }finally{fs.open=open;fs.writeFile=writeFile;fs.unlink=unlink;fs.link=link;await fs.rm(root,{recursive:true,force:true});}
+ }
+});
