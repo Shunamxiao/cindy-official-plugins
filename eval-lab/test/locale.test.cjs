@@ -78,3 +78,20 @@ test('default bank display and export title follow locale without translating us
   assert.equal(calls.at(-1).args.standings.title,expected);
  }
 });
+
+test('pending Host locale keeps dynamic bank and export consistent with static page, then refreshes',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+ const view=fs.readFileSync(path.join(__dirname,'../view.js'),'utf8'),i18n=fs.readFileSync(path.join(__dirname,'../i18n.js'),'utf8');
+ for(const locale of ['zh-CN','en','ja','error']){
+  let finish,exportAction;const calls=[],elements=new Map(),label={textContent:'开始测试',parentElement:{tagName:'BUTTON'}};
+  const $=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);};
+  const context={window:{},fetch:()=>new Promise((resolve,reject)=>{finish=()=>locale==='error'?reject(Error('offline')):resolve({json:async()=>({context:{locale}})});}),NodeFilter:{SHOW_TEXT:4},document:{documentElement:{lang:'zh-CN'},body:{},querySelectorAll:()=>[],createTreeWalker:()=>{let first=true;return {currentNode:label,nextNode(){if(!first)return false;first=false;return true;}};}},$,refreshing:false,state:{models:[]},bankId:'default',modelStamp:'[]',picks:new Map(),esc:String,summary(){},history(){},renderJob(){},message(){},renderModels(){},historyBankId:'default',standingsRows:[],standingsQuestions:[],scoreMode:'latest',bind:(id,fn)=>{exportAction=fn;},rpc:async(action,args)=>{calls.push({action,args});return action==='status'?{banks:[{id:'default',name:'Cindy 实战题库',questions:[]}],models:[],drafts:[],runs:[]}:{saved:true};}};
+  vm.runInNewContext(i18n,context);context.tr=t=>context.window.evalTranslate(t);context.bank=()=>context.state.banks[0];
+  vm.runInNewContext(view.slice(view.indexOf('async function refresh(){'),view.indexOf('\nfunction bind(')),context);
+  vm.runInNewContext(view.match(/^bind\('#export'.*$/m)[0],context);
+  for(let i=0;i<2;i++){await context.refresh();await exportAction();assert.equal(context.state.banks[0].name,'Cindy 实战题库');assert.equal(calls.at(-1).args.standings.title,'Cindy 实战题库');assert.equal(context.tr('开始测试'),label.textContent);}
+  finish();await context.window.evalLocaleReady;await context.refresh();await exportAction();
+  const expected=locale==='zh-CN'?'Cindy 实战题库':'Cindy Practical Evaluation Bank';
+  assert.equal(context.state.banks[0].name,expected);assert.equal(calls.at(-1).args.standings.title,expected);assert.equal(context.tr('开始测试'),label.textContent);
+ }
+});
