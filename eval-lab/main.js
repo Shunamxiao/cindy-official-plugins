@@ -197,7 +197,7 @@ async function cancelPreparation(){
  downloadCancelled=true;
  const download=activeDownload,install=activeInstall;
  const results=await Promise.allSettled([
-  download?Promise.resolve().then(()=>cindy.downloads.cancel({id:download})):undefined,
+  download?checked(Promise.resolve().then(()=>cindy.downloads.cancel({id:download}))):undefined,
   install?node('online_cancel',{operationId:install}):undefined
  ]);
  const failed=results.find(r=>r.status==='rejected');if(failed)throw failed.reason;
@@ -240,6 +240,7 @@ async function resolveQuestions(wanted,fromLaunch=false){
   const identities=new Set(matches.map(q=>q.distributionHash));
   if(key.includes(':')&&matches.length&&identities.size===1&&matches.every(q=>q.key===key)){resolved.push(matches[0].key);continue;}
   if(key.includes(':'))throw Error('所选题库版本不可用，请重新选择题库。');
+
   if(!remote){progress('正在准备默认题库…');remote=await inspectQuestions({url:c.indexUrl||DEFAULT_INDEX});}
   if(fromLaunch&&launchCancelled)throw Error('已停止准备。');
   progress('正在下载并校验：'+key);
@@ -374,7 +375,7 @@ async function questionCatalog(){
   const sourceKeys=bank.questions.filter(q=>q.questionId===(version?.questionId||d.key.split('@')[0])&&(q.key===installed?.key||q.sourceIndexUrl===(c.indexUrl||DEFAULT_INDEX))).map(q=>q.sourceKey).filter(Boolean);
   return {...d,...(version||{}),sourceKeys:[...new Set(sourceKeys)],key:d.key,installedKey:installed?.key,unresolved:!version,cached:!!version};
  });
- return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions.filter(q=>!defaults.some(d=>q.key===d.installedKey))],defaults};
+ return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions],defaults};
 }
 async function createAuthor(a){
  let task;

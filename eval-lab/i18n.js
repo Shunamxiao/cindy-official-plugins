@@ -173,9 +173,11 @@ function translate(locale,text,params={}){
  return result.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(params,key)?String(params[key]):match);
 }
 Object.assign(english,{'评测页面':'Evaluation pages','题库下载进度':'Question bank download progress','筛选历史题库':'Filter historical question banks','关闭':'Close','自动：使用全部可用 Worker 槽位':'Automatic: use all available Worker slots'});
-if(typeof module==='object')module.exports={translate};
+const runStatusLabels={prepared:'待交卷',failed:'未能评分',cancelled:'已停止',environment_invalid:'环境受阻，不计分'};
+function runStatus(locale,status){return translate(locale,Object.hasOwn(runStatusLabels,status)?runStatusLabels[status]:'未知');}
+if(typeof module==='object')module.exports={translate,runStatus};
 if(typeof window!=='undefined'){
  // Match the source HTML until Host locale resolves; rejection still selects English.
- let uiLocale='zh-CN';window.evalLocale=uiLocale;window.evalTranslate=(text,params)=>translate(uiLocale,text,params);
+ let uiLocale='zh-CN';window.evalLocale=uiLocale;window.evalTranslate=(text,params)=>translate(uiLocale,text,params);window.evalRunStatus=status=>runStatus(uiLocale,status);
  window.evalLocaleReady=(async()=>{try{const r=await(await fetch('/app-context')).json();uiLocale=r.context?.locale==='zh-CN'?'zh-CN':'en';}catch{uiLocale='en';}window.evalLocale=uiLocale;if(uiLocale==='zh-CN')return;document.documentElement.lang='en';const walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);while(walk.nextNode()){const n=walk.currentNode;if(['SCRIPT','STYLE'].includes(n.parentElement?.tagName))continue;const t=n.textContent.trim();if(english[t])n.textContent=n.textContent.replace(t,english[t]);}for(const attr of ['placeholder','aria-label','aria-description','title','alt'])for(const e of document.querySelectorAll('['+attr+']'))e.setAttribute(attr,window.evalTranslate(e.getAttribute(attr)));})();
 }

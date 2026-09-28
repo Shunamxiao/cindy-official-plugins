@@ -56,9 +56,10 @@ test('known missing draft input releases authoring without creating a task or re
  assert.notEqual(b.config.author.id,'broken');
 });
 test('download cancellation failure still reaches the registered installer',async()=>{
+ for(const failure of ['reject','non-ok']){
  const b=bridge(),request=b.cindy.node.request;let enter,release,cancelled=0;
  const ready=new Promise(r=>enter=r),pending=new Promise(r=>release=r);
- b.cindy.downloads.cancel=async()=>{throw Error('download transport lost');};
+ b.cindy.downloads.cancel=async()=>{if(failure==='non-ok')return {ok:false,message:'download transport lost'};throw Error('download transport lost');};
  b.cindy.node.request=async x=>{
   if(x.method==='online_plan')return {ok:true,result:{artifacts:[{sha256:'fixture',url:'https://example.test/a',bytes:1}]}};
   if(x.method==='online_install'){enter();await pending;return {ok:true,result:{}};}
@@ -66,7 +67,8 @@ test('download cancellation failure still reaches the registered installer',asyn
   return request(x);
  };
  const install=b.ui('install','online_install',{});await ready;
- await b.ui('cancel','cancel_download');assert.equal(cancelled,1);release();await install;
+ await b.ui('cancel','cancel_download');assert.equal(cancelled,1);release();await install;assert.equal(b.replies.find(r=>r.id==='cancel').ok,false);
+ }
 });
 test('independent inspect and install pin the selected root until settled',async()=>{
  for(const method of ['online_inspect','online_install']){
@@ -820,4 +822,16 @@ test('default history sources use exact index URL or current installed key, not 
  const questions=[q('old',url),q('current','https://github.com/makecindy/other/releases/download/v1/index.json'),q('foreign','https://github.com/makecindy/eval-bank/releases/download/v2/index.json'),{...q('imported'),key:'imported:a:audio@v2'}];
  b.cindy.node.request=async x=>x.method==='bank'?{ok:true,result:{questions}}:x.method==='online_cached'?{ok:true,result:{questions:[{key:'audio@v2',questionId:'audio',installedKey:questions[1].key}]}}:request(x);
  await b.ui('sources','status');const defaults=b.replies.at(-1).result.banks[0];assert.deepEqual(Array.from(defaults.questions[0].sourceKeys),['old','current']);
+});
+
+test('installed current default stays available as an explicit offline bank',async()=>{
+ const b=bridge(),request=b.cindy.node.request,key='online:current:audio@v2';let inspected=0;
+ b.cindy.node.request=async x=>{
+  if(x.method==='bank')return {ok:true,result:{questions:[{key,title:'Audio installed',questionId:'audio',distributionHash:'current'}]}};
+  if(x.method==='online_cached')return {ok:true,result:{questions:[{key:'audio@v2',installedKey:key}]}};
+  if(x.method==='online_inspect'){inspected++;throw Error('offline');}
+  return request(x);
+ };
+ await b.ui('catalog','status');const bank=b.replies.find(r=>r.id==='catalog').result.banks.find(b=>b.id===key);assert.ok(bank);
+ await b.ui('start','start',{...args,questions:bank.questions.map(q=>q.key)});assert.equal(b.replies.find(r=>r.id==='start').ok,true);assert.equal(inspected,0);assert.equal(b.config.batch.items[0].question,key);
 });
