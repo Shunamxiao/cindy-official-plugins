@@ -5,7 +5,7 @@ const digest=s=>crypto.createHash('sha256').update(s).digest('hex');
 test('corrupt bank replacement preserves the old tree on verification, cancellation and publication failures',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'bank-repair-')),rename=fs.rename;
  try{
-  const spec=JSON.stringify({id:'fixture',revision:'v1'}),archive=path.join(root,'archive'),bytes=Buffer.from('fake archive');await fs.writeFile(archive,bytes);
+  const spec=JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}),archive=path.join(root,'archive'),bytes=Buffer.from('fake archive');await fs.writeFile(archive,bytes);
   const sha=digest(bytes),name=sha+'.zip',q={key:'fixture@v1',revision:'v1',path:'question',files:{'question.json':digest(spec)},layers:[{artifact:name,mount:''}]};
   const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),sha256:sha,bytes:bytes.length,expandedBytes:spec.length}}};
   let mode='normal',ready,release;const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,fetchFile:async(u,d)=>{const b=JSON.stringify(index);await fs.writeFile(d,b);return {sha256:digest(b)};},runCommand:async(c,args)=>{await fs.writeFile(path.join(args[2],'question.json'),mode==='invalid'?'bad':spec);if(mode==='cancel'){ready();await new Promise(r=>release=r);}return {code:0};}});
@@ -68,7 +68,7 @@ test('Node operations heartbeat until resolve or reject and never emit heartbeat
 test('extraction budgets scale to the maximum declared size and timeout is not package corruption',async()=>{
  const {unpackTimeout}=require('../node/online.cjs');assert.equal(unpackTimeout(1024),120000);assert.equal(unpackTimeout(8*2**30),840000);
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'unpack-budget-'));try{
-  const spec=JSON.stringify({id:'fixture',revision:'v1'}),bytes=Buffer.from('archive'),sha=digest(bytes),name=sha+'.zip',archive=path.join(root,'archive');await fs.writeFile(archive,bytes);
+  const spec=JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}),bytes=Buffer.from('archive'),sha=digest(bytes),name=sha+'.zip',archive=path.join(root,'archive');await fs.writeFile(archive,bytes);
   const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[{key:'fixture@v1',path:'question',files:{'question.json':digest(spec)},layers:[{artifact:name,mount:''}]}],artifacts:{[name]:{url:url.replace('index.json',name),bytes:bytes.length,expandedBytes:8*2**30,sha256:sha}}};
   const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,fetchFile:async(u,d)=>{const text=JSON.stringify(index);await fs.writeFile(d,text);return {sha256:digest(text)};},runCommand:async(c,a,options)=>{assert.equal(options.timeout,840000);return {code:null,timedOut:true,stderr:'private'};}});
   const {indexId}=await svc.inspect({root,url});await assert.rejects(svc.install({root,indexId,question:'fixture@v1',hostArtifacts:{[sha]:archive}}),e=>e.code==='EXTRACTION_TIMEOUT'&&!e.message.includes('private'));

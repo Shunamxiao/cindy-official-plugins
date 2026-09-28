@@ -19,7 +19,7 @@ const url='https://github.com/makecindy/eval-bank/releases/download/test/index.j
 test('only explicit public makecindy Release sources accepted',()=>{assert.equal(source(url).hostname,'github.com');for(const u of ['http://github.com/makecindy/cindy/releases/download/a/b','https://127.0.0.1/index','https://github.com/evil/cindy/releases/download/a/b','https://github.com/makecindy/cindy/blob/main/index.json',url+'?token=secret'])assert.throws(()=>source(u));});
 test('download verifies, deduplicates runtimes, freezes versions, works offline; corruption rejected',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'online-bank-'));try{
- const src=path.join(root,'source');await fs.mkdir(src);await fs.writeFile(path.join(src,'question.json'),JSON.stringify({id:'fixture',revision:'v1'}));await fs.mkdir(path.join(src,'candidate'));await fs.writeFile(path.join(src,'candidate','hello.js'),'hello');
+ const src=path.join(root,'source');await fs.mkdir(src);await fs.writeFile(path.join(src,'question.json'),JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));await fs.mkdir(path.join(src,'candidate'));await fs.writeFile(path.join(src,'candidate','hello.js'),'hello');
  const archive=path.join(root,'fixture.zip');cp.execFileSync('python3',['-c',"import zipfile,sys,pathlib;z=zipfile.ZipFile(sys.argv[2],'w');[(z.write(p,p.relative_to(sys.argv[1]))) for p in pathlib.Path(sys.argv[1]).rglob('*') if p.is_file()];z.close()",src,archive]);const bytes=await fs.readFile(archive),h=hash(bytes),name=h+'.zip';const q={key:'fixture@v1',revision:'v1',path:'questions/fixture/v1',files:await files(src),layers:[{artifact:name,mount:''}]};
  const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),sha256:h,bytes:bytes.length,expandedBytes:(await fs.readFile(path.join(src,'question.json'))).length+5}}};let indexText=JSON.stringify(index),offline=false,calls=0,corrupt=false;
  const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{if(offline)throw Error('Offline');const b=u.endsWith('index.json')?Buffer.from(indexText):corrupt?Buffer.from('bad'):bytes;await fs.writeFile(d,b,{flag:'wx'});calls++;return {sha256:hash(b),bytes:b.length};}});
@@ -60,4 +60,21 @@ test('response body errors are localized without raw diagnostics',async()=>{
   https.get=(url,options,cb)=>{const req=new EventEmitter();req.setTimeout=()=>{};process.nextTick(()=>{const stream=new Readable({read(){if(oversized){this.push(Buffer.alloc(20));this.push(null);}else this.destroy(Error('PRIVATE raw transport diagnostic'));}});stream.statusCode=200;cb(stream);});return req;};
   await assert.rejects(require('../node/online.cjs').download(url,path.join(root,String(oversized)),10),oversized?/校验失败.*维护者/:/连接失败.*重试/);
  }}finally{https.get=original;await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('fresh and cached installs reject hash-correct invalid question specifications',async()=>{
+ for(const invalid of [{groups:[]},{scoringVersion:undefined},{groups:[{id:'core',weight:'2',mode:'all',items:['a']}]}])for(const cached of [false,true]){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'invalid-question-'));
+  try{
+   const spec=JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}],...invalid}),bytes=Buffer.from('fixture archive'),sha=hash(bytes),name=sha+'.zip';
+   const q={key:'fixture@v1',revision:'v1',path:'question',files:{'question.json':hash(spec)},layers:[{artifact:name,mount:''}]},index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),bytes:bytes.length,expandedBytes:spec.length,sha256:sha}}};
+   const archive=path.join(root,'archive');await fs.writeFile(archive,bytes);
+   const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,fetchFile:async(u,d)=>{const b=JSON.stringify(index);await fs.writeFile(d,b);return {sha256:hash(b)};},runCommand:async(c,args)=>{await fs.writeFile(path.join(args[2],'question.json'),spec);return {code:0};}});
+   const {indexId}=await svc.inspect({root,url}),dest=path.join(root,'online/banks',hash(JSON.stringify(q)));
+   if(cached){await fs.mkdir(path.join(dest,q.path),{recursive:true});await fs.writeFile(path.join(dest,q.path,'question.json'),spec);await fs.writeFile(path.join(dest,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[q]}));}
+   await assert.rejects(svc.install({root,indexId,question:q.key,hostArtifacts:{[sha]:archive}}),e=>e.code==='PACKAGE_INVALID'&&!e.message.includes(root));
+   if(cached)assert.equal(await fs.readFile(path.join(dest,q.path,'question.json'),'utf8'),spec);else await assert.rejects(fs.access(dest),{code:'ENOENT'});
+   assert.ok(!(await fs.readdir(path.join(root,'online'))).some(x=>x.startsWith('staging-')));
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+ }
 });

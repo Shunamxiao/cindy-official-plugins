@@ -4,7 +4,7 @@ const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 test('cancel drains the unpack process, removes staging, preserves installed banks and permits retry',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'install-cancel-'));
  try{
-  const src=path.join(root,'source');await fs.mkdir(src);await fs.writeFile(path.join(src,'question.json'),JSON.stringify({id:'fixture',revision:'v1'}));
+  const src=path.join(root,'source');await fs.mkdir(src);await fs.writeFile(path.join(src,'question.json'),JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));
   const archive=path.join(root,'archive.zip');cp.execFileSync('python3',['-c',"import zipfile,sys;z=zipfile.ZipFile(sys.argv[2],'w');z.write(sys.argv[1],'question.json');z.close()",path.join(src,'question.json'),archive]);
   const bytes=await fs.readFile(archive),sha=hash(bytes),name=sha+'.zip',url='https://github.com/makecindy/eval-bank/releases/download/test/index.json';
   const question={key:'fixture@v1',revision:'v1',path:'questions/fixture/v1',files:await files(src),layers:[{artifact:name,mount:''}]};
