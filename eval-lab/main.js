@@ -404,9 +404,10 @@ async function collectAuthor(a,run){
  const task=await cindy.tasks.get({taskId:a.taskId});
  await node('author_collect',{id:a.id,revision:a.revision,taskId:a.taskId,workspace:task.workingDir});
 }
+function calibrationState(result){return {calibration:result,status:result?.ok===true?'calibrated':'failed',error:result?.ok===true?null:'校准未通过，请检查校准报告并修正草稿后重试。'};}
 async function checkAuthor(){
  if(authorChecking||authorStarting)return;const a=(await config()).author;if(authorChecking||authorStarting||!a||!a.runId||['calibrated','failed'].includes(a.status))return;
- authorChecking=true;try{const r=await cindy.tasks.getRun({runId:a.runId});delete a.error;a.status=r.status;if(r.status==='completed'){await collectAuthor(a,r);a.calibration=await node('calibrate',{id:a.id,revision:a.revision});a.status='calibrated';}else if(['failed','cancelled','interrupted'].includes(r.status))a.status='failed';await updateConfig(c=>({...c,author:a}));}catch(e){await updateConfig(c=>({...c,author:{...a,...(a.status==='completed'?{status:'failed'}:{}),error:e.message}}));}finally{authorChecking=false;}
+ authorChecking=true;try{const r=await cindy.tasks.getRun({runId:a.runId});delete a.error;a.status=r.status;if(r.status==='completed'){await collectAuthor(a,r);Object.assign(a,calibrationState(await node('calibrate',{id:a.id,revision:a.revision})));}else if(['failed','cancelled','interrupted'].includes(r.status))a.status='failed';await updateConfig(c=>({...c,author:a}));}catch(e){await updateConfig(c=>({...c,author:{...a,...(a.status==='completed'?{status:'failed'}:{}),error:e.message}}));}finally{authorChecking=false;}
 }
 let launching=false,launchCancelled=false,authorStarting=false;
 async function assertRootChangeAllowed(c){
@@ -489,7 +490,7 @@ async function action(name,args={},callId){
    const a=(await config()).author,matching=a&&a.id===args.id&&a.revision===args.revision;
    if(name==='calibrate_question'&&matching&&a.handoff)await collectAuthor(a);
    const result=await node(name==='calibrate_question'?'calibrate':name==='create_question_draft'?'draft':'freeze',args,callId);
-   if(name==='calibrate_question'&&matching)await updateConfig(c=>({...c,author:{...c.author,status:'calibrated',calibration:result,error:null}}));
+   if(name==='calibrate_question'&&matching)await updateConfig(c=>({...c,author:{...c.author,...calibrationState(result)}}));
    return result;
   }finally{authorStarting=false;}
  }

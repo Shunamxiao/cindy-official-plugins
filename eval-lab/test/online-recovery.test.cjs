@@ -8,7 +8,7 @@ test('corrupt bank replacement preserves the old tree on verification, cancellat
   const spec=JSON.stringify({id:'fixture',revision:'v1'}),archive=path.join(root,'archive'),bytes=Buffer.from('fake archive');await fs.writeFile(archive,bytes);
   const sha=digest(bytes),name=sha+'.zip',q={key:'fixture@v1',revision:'v1',path:'question',files:{'question.json':digest(spec)},layers:[{artifact:name,mount:''}]};
   const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),sha256:sha,bytes:bytes.length,expandedBytes:spec.length}}};
-  let mode='normal',ready,release;const svc=service({base:async()=>root,within,files,fetchFile:async(u,d)=>{const b=JSON.stringify(index);await fs.writeFile(d,b);return {sha256:digest(b)};},runCommand:async(c,args)=>{await fs.writeFile(path.join(args[2],'question.json'),mode==='invalid'?'bad':spec);if(mode==='cancel'){ready();await new Promise(r=>release=r);}return {code:0};}});
+  let mode='normal',ready,release;const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,fetchFile:async(u,d)=>{const b=JSON.stringify(index);await fs.writeFile(d,b);return {sha256:digest(b)};},runCommand:async(c,args)=>{await fs.writeFile(path.join(args[2],'question.json'),mode==='invalid'?'bad':spec);if(mode==='cancel'){ready();await new Promise(r=>release=r);}return {code:0};}});
   const inspected=await svc.inspect({root,url}),p={root,indexId:inspected.indexId,question:q.key,hostArtifacts:{[sha]:archive}};
   const installed=await svc.install(p),manifest=path.join(installed.bank,'distribution.json');await fs.writeFile(manifest,'broken');
   mode='invalid';await assert.rejects(svc.install(p),/校验/);assert.equal(await fs.readFile(manifest,'utf8'),'broken');
@@ -25,7 +25,7 @@ test('damaged installed metadata does not prevent the page from loading or start
   for(const text of ['null','{broken',JSON.stringify({format:'eval-lab-bank-v1',questions:null})]){await fs.writeFile(path.join(dir,'distribution.json'),text);const result=await require('../node/engine.cjs').dispatch('bank',{root});assert.equal(result.questions.length,0);assert.equal(result.errors.length,1);}
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
-function fixture(root){const name='a'.repeat(64)+'.zip',index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[{key:'fixture@v1',path:'questions/fixture',files:{},layers:[{artifact:name,mount:''}]}],artifacts:{[name]:{url:url.replace('index.json',name),bytes:1,expandedBytes:1,sha256:'a'.repeat(64)}}},text=JSON.stringify(index);return {id:digest(text),svc:service({base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{await fs.writeFile(d,text);return {sha256:digest(text)};}})};}
+function fixture(root){const name='a'.repeat(64)+'.zip',index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[{key:'fixture@v1',path:'questions/fixture',files:{},layers:[{artifact:name,mount:''}]}],artifacts:{[name]:{url:url.replace('index.json',name),bytes:1,expandedBytes:1,sha256:'a'.repeat(64)}}},text=JSON.stringify(index);return {id:digest(text),svc:service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{await fs.writeFile(d,text);return {sha256:digest(text)};}})};}
 test('offline cache isolates damaged entries and an online check repairs the same index',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'index-recovery-'));
  try{const {svc,id}=fixture(root),valid=await svc.inspect({root,url});
@@ -52,7 +52,7 @@ test('partial index writes leave published data intact, preserve storage error c
 test('download sink errors retain actionable storage diagnostics',async()=>{
  const source=await fs.readFile(path.join(__dirname,'../node/online.cjs'),'utf8'),{EventEmitter}=require('node:events'),{Readable,Writable}=require('node:stream');
  for(const code of ['ENOSPC','EACCES','EDQUOT']){
-  const module={exports:{}};vm.runInNewContext(source,{module,require:id=>id==='node:https'?{get:(u,o,cb)=>{const req=new EventEmitter();req.setTimeout=()=>{};process.nextTick(()=>{const s=Readable.from(['data']);s.statusCode=200;cb(s);});return req;}}:id==='node:fs'?{...require(id),createWriteStream:()=>new Writable({write(c,e,done){done(Object.assign(Error('PRIVATE output'),{code,syscall:'write'}));}})}:require(id),setTimeout,clearTimeout,URL,AbortController});
+  const module={exports:{}};vm.runInNewContext(source,{module,require:id=>id==='node:https'?{get:(u,o,cb)=>{const req=new EventEmitter();req.setTimeout=()=>{};process.nextTick(()=>{const s=Readable.from(['data']);s.statusCode=200;cb(s);});return req;}}:id==='node:fs'?{...require(id),createWriteStream:()=>new Writable({write(c,e,done){done(Object.assign(Error('PRIVATE output'),{code,syscall:'write'}));}})}:require(id==='./question-platform.cjs'?'../node/question-platform.cjs':id),setTimeout,clearTimeout,URL,AbortController});
   await assert.rejects(module.exports.download(url,'unused',100),e=>e.code===code&&/磁盘空间/.test(e.message)&&!e.message.includes('PRIVATE'));
  }
 });
@@ -70,8 +70,30 @@ test('extraction budgets scale to the maximum declared size and timeout is not p
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'unpack-budget-'));try{
   const spec=JSON.stringify({id:'fixture',revision:'v1'}),bytes=Buffer.from('archive'),sha=digest(bytes),name=sha+'.zip',archive=path.join(root,'archive');await fs.writeFile(archive,bytes);
   const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[{key:'fixture@v1',path:'question',files:{'question.json':digest(spec)},layers:[{artifact:name,mount:''}]}],artifacts:{[name]:{url:url.replace('index.json',name),bytes:bytes.length,expandedBytes:8*2**30,sha256:sha}}};
-  const svc=service({base:async()=>root,within,files,fetchFile:async(u,d)=>{const text=JSON.stringify(index);await fs.writeFile(d,text);return {sha256:digest(text)};},runCommand:async(c,a,options)=>{assert.equal(options.timeout,840000);return {code:null,timedOut:true,stderr:'private'};}});
+  const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,fetchFile:async(u,d)=>{const text=JSON.stringify(index);await fs.writeFile(d,text);return {sha256:digest(text)};},runCommand:async(c,a,options)=>{assert.equal(options.timeout,840000);return {code:null,timedOut:true,stderr:'private'};}});
   const {indexId}=await svc.inspect({root,url});await assert.rejects(svc.install({root,indexId,question:'fixture@v1',hostArtifacts:{[sha]:archive}}),e=>e.code==='EXTRACTION_TIMEOUT'&&!e.message.includes('private'));
   assert.equal((await fs.readdir(path.join(root,'online'))).some(x=>x.startsWith('staging-')),false);
  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('unsupported platforms can browse but reject planning and installation before artifacts or staging',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'bank-platform-'));
+ try{
+  const {svc}=fixture(root),catalog=await svc.inspect({root,url}),p={root,indexId:catalog.indexId,question:'fixture@v1'};
+  for(const [platform,arch] of [['linux','x64'],['win32','arm64'],['darwin','x64']]){
+   let downloads=0,unpacks=0;
+   const unsupported=service({base:async()=>root,within,files,platform,arch,fetchFile:async()=>downloads++,runCommand:async()=>unpacks++});
+   assert.equal((await unsupported.cached({root,url})).questions.length,1);
+   await assert.rejects(unsupported.plan(p),e=>e.code==='UNSUPPORTED_PLATFORM');
+   await assert.rejects(unsupported.install(p),e=>e.code==='UNSUPPORTED_PLATFORM');
+   assert.equal(downloads,0);assert.equal(unpacks,0);
+   assert.equal((await fs.readdir(path.join(root,'online'))).some(x=>/staging|banks|artifacts/.test(x)),false);
+  }
+  assert.equal((await svc.plan(p)).artifacts.length,1);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+test('all dynamic evaluation phases have English fallback text',async()=>{
+ const view=await fs.readFile(path.join(__dirname,'../view.js'),'utf8'),code=await fs.readFile(path.join(__dirname,'../i18n.js'),'utf8');
+ const labels=vm.runInNewContext('('+view.match(/,labels=(\{[^\n]+?\});/)[1]+')');
+ const english=vm.runInNewContext(code.slice(0,code.indexOf('let uiLocale'))+';english');
+ for(const text of Object.values(labels)){assert.ok(english[text],text);assert.doesNotMatch(english[text],/[\u3400-\u9fff]/);}
 });

@@ -1,4 +1,8 @@
 const english={
+'校准未通过，请检查校准报告并修正草稿后重试。':'Calibration failed. Check its report, correct the draft and retry.',
+'此题库需要 Apple 芯片的 macOS，请在支持的设备上安装和运行，或导入兼容当前平台的题库。':'This bank requires macOS on Apple silicon. Install and run it on a supported device, or import a bank compatible with this platform.',
+'正在自动恢复':'Recovering automatically','等待主任务确认':'Waiting for coordinator confirmation','正在停止评测':'Stopping evaluation','主任务正在协调':'Coordinator is organizing the evaluation','等待授权':'Waiting for permission','正在准备作答目录':'Preparing answer directories','等待模型开始':'Waiting for the model to start','模型正在作答':'Model is answering','正在独立评分':'Grading independently','正在核对执行状态':'Checking execution status','评测暂停，需要处理':'Evaluation paused; action required',
+
 'Python 3 无法运行，请安装 Python 3 并确保 Cindy 的 PATH 能找到 python3，重启 Cindy 后重试；已有作答和成绩保留。':'Python 3 cannot run. Install Python 3, make python3 available in Cindy’s PATH, restart Cindy and retry. Existing answers and scores are preserved.',
 '并发上限':'Concurrency limit','协调费用 USD':'Coordinator cost USD','约':'Approx.','单列，不计入模型作答费用':'Listed separately; excluded from model answer costs',
 '出题尚未结束，请完成出题和校准后再更改数据目录。':'Authoring is still in progress. Finish authoring and calibration before changing the data directory.',

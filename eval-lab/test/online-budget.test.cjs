@@ -1,0 +1,41 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const {validate,service}=require('../node/online.cjs');
+const {within}=require('../node/engine.cjs');
+const GiB=2**30,url='https://github.com/makecindy/eval-bank/releases/download/test/index.json';
+function fixture(bytes=8*GiB,expandedBytes=32*GiB){
+ const sha='a'.repeat(64),name=sha+'.zip';
+ return {format:'eval-lab-online-v1',platform:'darwin-arm64',artifacts:{[name]:{url:url.replace('index.json',name),sha256:sha,bytes,expandedBytes}},questions:[{key:'fixture@v1',path:'question',files:{},layers:[{artifact:name,mount:''}]}]};
+}
+test('question budgets accept exact boundaries and reject one byte over',()=>{
+ assert.ok(validate(fixture(),url));
+ for(const [bytes,expanded] of [[8*GiB+1,32*GiB],[8*GiB,32*GiB+1]])assert.throws(()=>validate(fixture(bytes,expanded),url));
+ const index=fixture(4*GiB,16*GiB),sha='b'.repeat(64),name=sha+'.zip';
+ index.artifacts[name]={url:url.replace('index.json',name),sha256:sha,bytes:4*GiB,expandedBytes:16*GiB};
+ index.questions[0].layers.push({artifact:name,mount:'runtime'});
+ assert.ok(validate(index,url));
+ index.artifacts[name].bytes++;assert.throws(()=>validate(index,url));index.artifacts[name].bytes--;
+ index.artifacts[name].expandedBytes++;assert.throws(()=>validate(index,url));
+});
+test('downloads deduplicate archives; repeated mounts still count their expansion; budgets are per question',()=>{
+ const index=fixture(8*GiB,16*GiB),q=index.questions[0];
+ q.layers.push({...q.layers[0],mount:'runtime'});
+ assert.ok(validate(index,url));
+ index.questions.push({...q,key:'second@v1',path:'second'});
+ assert.ok(validate(index,url));
+ q.layers.push({...q.layers[0],mount:'another'});
+ assert.throws(()=>validate(index,url));
+});
+test('cached oversized index cannot bypass planning or installation and triggers no extraction',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-budget-')),id='b'.repeat(64);let work=0;
+ try{
+  const index=fixture(8*GiB,16*GiB);index.questions[0].layers.push({artifact:'a'.repeat(64)+'.zip',mount:'x'},{artifact:'a'.repeat(64)+'.zip',mount:'y'});
+  const dir=path.join(root,'online/indices',id);await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'index.json'),JSON.stringify({url,index}));
+  const svc=service({base:async()=>root,within,platform:'darwin',arch:'arm64',files:async()=>{work++;return {};},runCommand:async()=>{work++;},fetchFile:async()=>{work++;}});
+  const args={root,indexId:id,question:'fixture@v1'};
+  await assert.rejects(svc.plan(args));await assert.rejects(svc.install(args));
+  assert.deepEqual(await svc.cached({root,url}),{questions:[]});assert.equal(work,0);
+  assert.deepEqual((await fs.readdir(path.join(root,'online'))).sort(),['indices']);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

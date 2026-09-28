@@ -661,3 +661,17 @@ test('root changes distinguish terminal author failure from completed work await
   await b.ui('root','setup_root');assert.equal(b.replies.at(-1).ok,['failed','cancelled','interrupted'].includes(status));
  }
 });
+test('both calibration entrypoints retain failed reports and protect root until verified success',async()=>{
+ for(const automatic of [false,true]){
+  const b=bridge({root:'/original',author:{id:'draft',revision:'v1',runId:'done',status:automatic?'running':'failed'}});
+  b.cindy.tasks.getRun=async()=>({status:'completed'});b.cindy.pick=async()=>({ok:true,path:'/new'});
+  const request=b.cindy.node.request;let ok=false;
+  b.cindy.node.request=async x=>x.method==='calibrate_finish'?{ok:true,result:{ok,checkId:'stable'}}:request(x);
+  if(automatic)await b.ui('poll','status');else await b.tool({type:'tool-call',tool:'calibrate_question',callId:'failed',args:{id:'draft',revision:'v1'}});
+  assert.equal(b.config.author.status,'failed');assert.equal(b.config.author.calibration.ok,false);assert.match(b.config.author.error,/校准未通过/);
+  await b.ui('blocked','setup_root');assert.equal(b.replies.at(-1).ok,false);assert.equal(b.config.root,'/original');
+  ok=true;await b.tool({type:'tool-call',tool:'calibrate_question',callId:'retry',args:{id:'draft',revision:'v1'}});
+  assert.equal(b.config.author.status,'calibrated');assert.equal(b.config.author.error,null);
+  await b.ui('allowed','setup_root');assert.equal(b.config.root,'/new');
+ }
+});

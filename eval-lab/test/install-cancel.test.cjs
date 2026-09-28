@@ -12,7 +12,7 @@ test('cancel drains the unpack process, removes staging, preserves installed ban
   let phase='unpack',started,release;
   let ready=new Promise(r=>started=r),barrier=new Promise(r=>release=r);
   const marker=path.join(root,'child-ready');
-  const svc=service({base:async()=>root,within,
+  const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,
    files:async(...args)=>{if(phase==='verify'&&args[0].includes('staging-')){started();await barrier;}return files(...args);},
    fetchFile:async(_,dest)=>{const b=Buffer.from(JSON.stringify(index));await fs.writeFile(dest,b);return {sha256:hash(b),bytes:b.length};},
    runCommand:async(command,args,options)=>{
