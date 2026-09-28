@@ -16,3 +16,13 @@ test('ungraded and unresolved banks cannot create complete scores; sharing uses 
  const rows=[r('a','1/2','2026-01-01',{model:'<script>bad</script>'})];
  const html=report(rows,{title:'<img>',mode:'latest',questions:[q('a'),q('b')]});assert.match(html,/0.50/);assert.match(html,/待补测/);assert.ok(!html.includes('<script>'));assert.match(html,/&lt;img&gt;/);
 });
+
+test('shared standings uses report-local provider labels in totals and details',()=>{
+ const rows=[r('a',1,1,{provider:'private-account-a',costUSD:1}),r('a',0,2,{provider:'private-account-b',costUSD:2})];
+ for(const locale of ['zh-CN','en','ja','ko']){
+  const html=report(rows,{title:'Bank',mode:'latest',questions:[q('a')],locale});
+  const label=locale==='zh-CN'?'来源':'Source';
+  for(const n of [1,2])assert.equal(html.split(label+' '+n).length-1,2);
+  assert.ok(!html.includes('private-account'));assert.match(html,/\$1.00/);assert.match(html,/\$2.00/);
+ }
+});
