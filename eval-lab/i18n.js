@@ -1,4 +1,5 @@
 const english={
+'请更新 Cindy 开发版以使用题库下载':'Please update Cindy to the matching development build to download question banks.',
 '当前 Cindy 不支持普通任务接口，请使用配套开发版。':'This Cindy version does not support the task API. Use the matching development build.',
 '任务接口尚未就绪。':'The task API is not ready yet.',
 '本地评分中断，请恢复评测以重新评分；已有作答保留，不会重新调用模型。':'Local grading was interrupted. Resume the evaluation to grade the saved answer again without calling the model again.',

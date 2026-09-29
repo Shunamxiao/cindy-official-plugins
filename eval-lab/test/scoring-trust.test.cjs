@@ -25,3 +25,46 @@ test('writable environment receipts and old review sidecars cannot replace indep
   const raw=JSON.parse(await fs.readFile(path.join(dir,'result.json')));raw.status='environment_invalid';raw.score=null;raw.scoreExact=null;await fs.writeFile(path.join(dir,'result.json'),JSON.stringify(raw));assert.equal((await dispatch('runs',{root}))[0].status,'environment_invalid');
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('grading refuses an entrypoint changed after verification and preserves the saved answer',async()=>{
+ const cp=require('node:child_process'),sync=require('node:fs'),spawn=cp.spawn;
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-grader-version-'));
+ try{
+  const bank=path.join(root,'bank'),q=path.join(bank,'q'),grader=path.join(q,'author/grade.py');
+  await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.mkdir(path.join(q,'author'));
+  await fs.writeFile(path.join(q,'candidate/TASK.md'),'Saved answer');
+  await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'q',revision:'v1',title:'Q',scoringVersion:'v1',groups:[{id:'g',weight:'1',mode:'all',items:['a']}]}));
+  const original="import json,sys,pathlib\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':False}}))\n";
+  await fs.writeFile(grader,original);
+  await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'q@v1',path:'q',files:await files(q)}]}));
+  const r=await dispatch('prepare',{root,bank,question:'q@v1',model:'fixture',provider:'fixture',harness:'fixture',effort:'default'});
+  const before=await files(r.workspace),receipt={channel:'Orca Worker',sessionId:'fixture',completedAt:2000};let starts=0;
+  cp.spawn=function(command,args,options){if(args[1]?.endsWith('grade-run.py')){starts++;sync.writeFileSync(grader,original.replace('False','True'));}return spawn.call(this,command,args,options);};
+  await assert.rejects(dispatch('grade',{root,runId:r.runId,receipt}),/Grader changed/);
+  await assert.rejects(fs.access(path.join(path.dirname(r.workspace),'result.json')),{code:'ENOENT'});
+  assert.deepEqual(await files(r.workspace),before);assert.equal(starts,1);
+  cp.spawn=spawn;await fs.writeFile(grader,original);
+  assert.equal((await dispatch('grade',{root,runId:r.runId,receipt})).score,0);
+ }finally{cp.spawn=spawn;await fs.rm(root,{recursive:true,force:true});}
+});
+
+
+test('grading executes the verified bytes after a later replacement with normal Python entrypoint context',async()=>{
+ const cp=require('node:child_process'),spawn=cp.spawn;
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-grader-loaded-'));
+ try{
+  const bank=path.join(root,'bank'),q=path.join(bank,'q'),grader=path.join(q,'author/grade.py');
+  await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.mkdir(path.join(q,'author'));
+  await fs.writeFile(path.join(q,'candidate/TASK.md'),'Saved answer');
+  await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'q',revision:'v1',title:'Q',scoringVersion:'v1',groups:[{id:'g',weight:'1',mode:'all',items:['a']}]}));
+  await fs.writeFile(path.join(q,'author/helper.py'),'value = 42\n');
+  await fs.writeFile(path.join(q,'author/data.txt'),'local resource');
+  await fs.writeFile(grader,"import json,sys,pathlib,helper,__main__\nanswer = False\nassert __main__.answer is answer\nassert helper.value == 42\nassert pathlib.Path(__file__).with_name('data.txt').read_text() == 'local resource'\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':answer}}))\n");
+  await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'q@v1',path:'q',files:await files(q)}]}));
+  const r=await dispatch('prepare',{root,bank,question:'q@v1',model:'fixture',provider:'fixture',harness:'fixture',effort:'default'});
+  cp.spawn=function(command,args,options){if(args[1]?.endsWith('grade-run.py'))args=[args[0],path.join(__dirname,'fixtures/grade-crash.py'),args[1],'entry-read',path.join(root,'marker'),...args.slice(2)];return spawn.call(this,command,args,options);};
+  const result=await dispatch('grade',{root,runId:r.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:2000}});
+  assert.equal(result.status,'graded');assert.equal(result.score,0);
+  assert.match(await fs.readFile(grader,'utf8'),/answer = True/);
+ }finally{cp.spawn=spawn;await fs.rm(root,{recursive:true,force:true});}
+});

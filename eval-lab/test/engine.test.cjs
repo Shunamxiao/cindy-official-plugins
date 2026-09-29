@@ -176,3 +176,16 @@ test('imported question identity must match its manifest before preparing an ans
   }finally{await fs.rm(root,{recursive:true,force:true});}
  }
 });
+
+test('run discovery ignores unrelated files and directories without changing them',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-run-discovery-'));
+ try{
+  const runs=path.join(root,'eval-lab-data/runs');await fs.mkdir(path.join(runs,'valid-run'),{recursive:true});
+  const run={runId:'valid-run',status:'prepared',questionId:'q',revision:'v1',model:'fixture'};
+  await fs.writeFile(path.join(runs,'valid-run/run.json'),JSON.stringify(run));
+  for(const name of ['.DS_Store','valid-file'])await fs.writeFile(path.join(runs,name),'preserve');
+  await fs.mkdir(path.join(runs,'.unrelated'));
+  assert.deepEqual((await dispatch('runs',{root})).map(r=>r.runId),['valid-run']);
+  for(const name of ['.DS_Store','valid-file'])assert.equal(await fs.readFile(path.join(runs,name),'utf8'),'preserve');
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

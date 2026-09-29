@@ -4,6 +4,7 @@ import errno, os, pathlib, runpy, shutil, sys, time
 runner, phase, marker, *arguments = sys.argv[1:]
 sys.argv = [runner, *arguments]
 original_link, original_copy = os.link, shutil.copytree
+original_read = pathlib.Path.read_bytes
 
 
 def pause():
@@ -27,5 +28,13 @@ def copy(source, destination, *args, **kwargs):
     return result
 
 
+def read_bytes(file):
+    data = original_read(file)
+    if phase == 'entry-read' and file.name == 'grade.py':
+        file.write_bytes(data.replace(b'answer = False', b'answer = True'))
+    return data
+
+
+pathlib.Path.read_bytes = read_bytes
 os.link, shutil.copytree = link, copy
 runpy.run_path(runner, run_name='__main__')

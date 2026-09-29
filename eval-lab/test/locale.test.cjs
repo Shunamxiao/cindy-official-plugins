@@ -123,3 +123,7 @@ test('download cancellation messages use the shared locale fallback',()=>{
  for(const locale of ['en','ja','ko'])assert.equal(translate(locale,'下载已取消'),'Download cancelled');
  assert.equal(translate('zh-CN','下载已取消'),'下载已取消');
 });
+
+test('download capability upgrade prompt falls back to English',()=>{
+ for(const locale of ['en','ja','ko'])assert.doesNotMatch(translate(locale,'请更新 Cindy 开发版以使用题库下载'),/[\u3400-\u9fff]/);
+});

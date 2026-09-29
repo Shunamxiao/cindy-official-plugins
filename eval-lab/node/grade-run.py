@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import pathlib
-import runpy
+import types
 import shutil
 import sys
 import tempfile
@@ -42,6 +42,7 @@ def hashes(root):
 
 def main():
     directory, source, grader = map(pathlib.Path, sys.argv[1:4])
+    expected_grader_hash = sys.argv[4]
     receipt = json.load(sys.stdin)
     # Same platform primitive as freeze-publish.py; the file is never deleted.
     with (directory / 'grading.guard').open('a+b') as lock:
@@ -61,6 +62,10 @@ def main():
         execution_path = directory / 'grader-execution.json'
         if execution_path.exists():
             return 0
+        # Execute the same bytes that match the registered entrypoint, not a later read.
+        grader_bytes = grader.read_bytes()
+        if hashlib.sha256(grader_bytes).hexdigest() != expected_grader_hash:
+            return 76
         # Incomplete attempts remain separate. A surviving test subprocess cannot
         # write into a later attempt's copy. The paid workspace is never changed.
         attempt = pathlib.Path(tempfile.mkdtemp(prefix='grading-', dir=directory))
@@ -73,12 +78,19 @@ def main():
         sys.argv = [str(grader), str(snapshot), str(output)]
         sys.path.insert(0, str(grader.parent))
         code = 0
+        previous_main = sys.modules['__main__']
+        module = types.ModuleType('__main__')
+        module.__dict__.update(__file__=str(grader), __package__='', __spec__=None,
+                               __loader__=None, __cached__=None)
+        sys.modules['__main__'] = module
         try:
-            runpy.run_path(str(grader), run_name='__main__')
+            exec(compile(grader_bytes, str(grader), 'exec'), module.__dict__)
         except SystemExit as error:
             code = error.code if isinstance(error.code, int) else (0 if error.code is None else 1)
         except Exception:
             code = 1
+        finally:
+            sys.modules['__main__'] = previous_main
         publish(execution_path, {'code': code, 'timedOut': False,
                                 'attempt': attempt.name, 'submissionHashes': hashes(snapshot)})
         return 0
