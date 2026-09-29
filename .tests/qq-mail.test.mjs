@@ -518,7 +518,7 @@ function createSendHarness() {
   };
 }
 
-const sendCredentials = { email: 'user@qq.com', authorizationCode: 'abcdefghijklmnop' };
+const sendCredentials = { email: 'user@example.test', authorizationCode: 'placeholder-authorization-code' };
 
 function sendProbe(harness, body) {
   return worker.performAction(
@@ -584,6 +584,8 @@ test('Worker 拒绝缺少正文、非字符串正文与超长正文', async () =
   await assert.rejects(sendProbe(harness, {}), /INVALID_BODY/);
   await assert.rejects(sendProbe(harness, { body_text: 123 }), /INVALID_BODY/);
   await assert.rejects(sendProbe(harness, { body_html: null }), /INVALID_BODY/);
+  // 另一份正文有效也不能掩盖类型错误：不能静默降级成纯文本邮件。
+  await assert.rejects(sendProbe(harness, { body_text: 'ok', body_html: 42 }), /INVALID_BODY/);
   await assert.rejects(sendProbe(harness, { body_html: '<p>a\u0000b</p>' }), /INVALID_BODY/);
   await assert.rejects(sendProbe(harness, { body_html: 'x'.repeat(500001) }), /MESSAGE_TOO_LARGE/);
   await assert.rejects(sendProbe(harness, { body_text: 'x'.repeat(500001) }), /MESSAGE_TOO_LARGE/);
@@ -618,4 +620,59 @@ test('main.js 让 send/draft 接受 body_html，并在缺少正文时给出可�
   assert.equal(missing.ok, false);
   assert.match(missing.message, /body_text 或 body_html/);
   assert.equal(harness.nodeRequests.length, 2);
+});
+test('Worker 只给 body_html 时纯文本备选可读，并跳过没有文字的正文', async () => {
+  const harness = createSendHarness();
+  await sendProbe(harness, {
+    body_html: '<style>p{color:red}</style><p>Tom &amp; Jerry</p>'
+      + '<script>alert(1)</script><p>价格 &#165;99 &middot; 5 &lt; 6</p>',
+  });
+  assert.equal(harness.sent[0].text, 'Tom & Jerry 价格 ¥99 · 5 < 6');
+
+  // 只有图片的正文剥离后没有文字：不发空的纯文本部分，工具说明已写明该例外。
+  const imageOnly = createSendHarness();
+  await sendProbe(imageOnly, { body_html: '<img src="https://example.test/a.png" alt="">' });
+  assert.equal(imageOnly.sent[0].html, '<img src="https://example.test/a.png" alt="">');
+  assert.equal(Object.hasOwn(imageOnly.sent[0], 'text'), false);
+});
+
+test('读取邮件时 HTML 正文走同一套降级规则', async () => {
+  const harness = createWorkerHarness({
+    async fetchOne() {
+      return { uid: 42, envelope: {}, flags: new Set(), size: null };
+    },
+    async download() {
+      return { meta: { expectedSize: null }, content: Readable.from([Buffer.from('source')]) };
+    },
+  }, async () => ({ html: '<style>a{}</style><p>Hello &amp; welcome</p>' }));
+
+  const result = await worker.performAction(
+    sendCredentials,
+    { action: 'read', folder: 'INBOX', message_uid: 42 },
+    harness.deps,
+  );
+  assert.equal(result.body_text, 'Hello & welcome');
+});
+
+test('main.js 拒绝已提供但类型错误的正文，不静默丢弃', async () => {
+  const harness = createMainHarness(async () => ({ ok: true, result: { sent: true } }));
+
+  const badHtml = await harness.call('qq_mail', {
+    action: 'send', to: 'b@example.test', subject: 'x', body_text: 'plain', body_html: null,
+  });
+  assert.equal(badHtml.ok, false);
+  assert.match(badHtml.message, /body_html 必须是字符串/);
+
+  const badText = await harness.call('qq_mail', {
+    action: 'draft', to: 'b@example.test', subject: 'x', body_text: 42, body_html: '<p>hi</p>',
+  });
+  assert.equal(badText.ok, false);
+  assert.match(badText.message, /body_text 必须是字符串/);
+
+  const htmlOnly = await harness.call('qq_mail', {
+    action: 'send', to: 'b@example.test', subject: 'x', body_html: '<p>hi</p>',
+  });
+  assert.equal(htmlOnly.ok, true);
+  assert.equal(Object.hasOwn(harness.nodeRequests[0].params.action, 'body_text'), false);
+  assert.equal(harness.nodeRequests.length, 1);
 });

@@ -66325,8 +66325,54 @@ var require_worker = __commonJS({
         };
       }));
     }
+    var HTML_ENTITIES = Object.freeze({
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: '"',
+      apos: "'",
+      nbsp: " ",
+      ensp: " ",
+      emsp: " ",
+      thinsp: " ",
+      shy: "",
+      middot: "\xB7",
+      hellip: "\u2026",
+      mdash: "\u2014",
+      ndash: "\u2013",
+      laquo: "\xAB",
+      raquo: "\xBB",
+      ldquo: "\u201C",
+      rdquo: "\u201D",
+      lsquo: "\u2018",
+      rsquo: "\u2019",
+      copy: "\xA9",
+      reg: "\xAE",
+      trade: "\u2122",
+      times: "\xD7",
+      divide: "\xF7",
+      deg: "\xB0",
+      sect: "\xA7",
+      yen: "\xA5",
+      euro: "\u20AC",
+      pound: "\xA3"
+    });
+    function decodeHtmlEntities(text) {
+      return text.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]{1,31});/g, (match, body) => {
+        if (body.charAt(0) === "#") {
+          const hex = body.charAt(1) === "x" || body.charAt(1) === "X";
+          const code = Number.parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
+          return Number.isInteger(code) && code > 0 && code <= 1114111 ? String.fromCodePoint(code) : match;
+        }
+        const named = HTML_ENTITIES[body.toLowerCase()];
+        return named === void 0 ? match : named;
+      });
+    }
     function htmlToPlainText(html) {
-      return typeof html === "string" ? html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
+      if (typeof html !== "string") return "";
+      return decodeHtmlEntities(
+        html.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ")
+      ).replace(/\s+/g, " ").trim();
     }
     async function readMessage(credentials, action, deps) {
       const folder = action.folder || "INBOX";

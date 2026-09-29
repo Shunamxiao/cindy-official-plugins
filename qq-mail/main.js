@@ -172,9 +172,16 @@ function sanitizeMailArgs(args) {
 
   if (action === 'send' || action === 'draft') {
     // 正文可以只给纯文本、只给 HTML，或两者都给（由 Worker 组装成
-    // multipart/alternative）；两个都不是字符串时才算参数无效。
-    var hasText = typeof args.body_text === 'string';
-    var hasHtml = typeof args.body_html === 'string';
+    // multipart/alternative）。已提供的正文必须是字符串：静默丢弃类型错误的
+    // 那份会让外发内容与调用方意图不符，因此在这里直接拒绝。
+    var hasText = args.body_text !== undefined;
+    var hasHtml = args.body_html !== undefined;
+    if (hasText && typeof args.body_text !== 'string') {
+      throw new Error(action + ' 的 body_text 必须是字符串');
+    }
+    if (hasHtml && typeof args.body_html !== 'string') {
+      throw new Error(action + ' 的 body_html 必须是字符串');
+    }
     if (args.to === undefined || typeof args.subject !== 'string' || (!hasText && !hasHtml)) {
       throw new Error(action + ' 需要 to、subject 和正文：body_text 或 body_html 至少提供一个');
     }
