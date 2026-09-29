@@ -1,5 +1,18 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');const {dispatch}=require('../node/engine.cjs');
 const realBankOptions={skip:process.env.EVAL_TEST_BANK?false:'Set EVAL_TEST_BANK to run public-bank integration tests'};
+test('preparation recovery rejects a changed bank or version while retaining the original answer',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-resume-version-')),bank=path.join(root,'bank'),q=path.join(bank,'q'),{files}=require('../node/engine.cjs');
+ try{
+  await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.writeFile(path.join(q,'candidate/TASK.md'),'original scope');
+  await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}));
+  const publish=async()=>fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'fixture@v1',path:'q',files:await files(q)}]}));await publish();
+  const p={root,bank,question:'fixture@v1',runId:'same-run',model:'m',provider:'p',harness:'h',effort:'e'},first=await dispatch('prepare',p);
+  const other=path.join(root,'other');await fs.cp(bank,other,{recursive:true});await assert.rejects(dispatch('prepare',{...p,bank:other}),/Run identity conflict/);
+  await fs.writeFile(path.join(q,'candidate/TASK.md'),'changed scope');await publish();
+  await assert.rejects(dispatch('prepare',p),/Run identity conflict/);assert.equal(await fs.readFile(path.join(first.workspace,'TASK.md'),'utf8'),'original scope');
+  await fs.writeFile(path.join(q,'candidate/TASK.md'),'original scope');await publish();assert.deepEqual(await dispatch('prepare',p),JSON.parse(JSON.stringify(first)));
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('missing or truncated author materials return a recoverable input result without touching evidence',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-draft-input-'));
  try{

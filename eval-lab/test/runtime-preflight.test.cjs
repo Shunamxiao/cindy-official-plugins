@@ -1,5 +1,9 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),cp=require('node:child_process'),path=require('node:path'),fs=require('node:fs/promises'),os=require('node:os');
 const engine=path.resolve(__dirname,'../node/engine.cjs');
+test('Python startup resource and permission errors retain their actual cause',async()=>{
+ const {preflight}=require('../node/python-runtime.cjs');
+ for(const code of ['EACCES','EPERM','EMFILE','ENFILE','EAGAIN'])await assert.rejects(preflight(async()=>({code:null,errorCode:code})),e=>e.code===code&&!/install Python|安装 Python/.test(e.message));
+});
 test('missing Python rejects preflight and preparation before creating answer files',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-python-'));
  try{

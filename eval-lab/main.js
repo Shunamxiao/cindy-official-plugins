@@ -214,9 +214,14 @@ async function inspectQuestions(args,callId){
 async function installQuestion(args,fromLaunch=false){
  if(fromLaunch&&launchCancelled)throw Error('已停止准备。');
  if(downloadBusy)throw Error('题库正在准备，请稍候');
- if(!cindy.downloads?.start)throw Error('请更新 Cindy 开发版以使用题库下载');
  downloadBusy=true;if(!fromLaunch)downloadCancelled=false;
  try{
+ activeInstall=(await node('online_begin')).operationId;
+ if(typeof activeInstall!=='string')throw Error('Install cancellation unavailable');
+ let current;
+ do{if(downloadCancelled)throw Error('下载已取消');current=await node('online_step',{...args,operationId:activeInstall,requireHostDownloads:true});}while(!current.done&&current.phase==='cached');
+ if(!current.done){
+ if(!cindy.downloads?.start)throw Error('请更新 Cindy 开发版以使用题库下载');
  const plan=await node('online_plan',args),downloadTokens={};
  for(const a of plan.artifacts){
   if(downloadCancelled)throw Error('下载已取消');
@@ -226,12 +231,9 @@ async function installQuestion(args,fromLaunch=false){
   downloadTokens['artifact_'+a.sha256]=r.token;
  }
  if(downloadCancelled)throw Error('下载已取消');
- activeInstall=(await node('online_begin')).operationId;
- if(typeof activeInstall!=='string')throw Error('Install cancellation unavailable');
- if(downloadCancelled)throw Error('下载已取消');
  channel.postMessage({type:'download-progress',phase:'unpacking'});
- let current;
  do{if(downloadCancelled)throw Error('下载已取消');current=await node('online_step',{...args,operationId:activeInstall,requireHostDownloads:true},undefined,downloadTokens);}while(!current.done);
+ }
  const result=current.result;
  // Successful atomic publication is final even if cancellation arrives late.
  channel.postMessage({type:'download-progress',phase:'ready'});

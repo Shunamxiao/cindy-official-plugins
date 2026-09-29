@@ -26,3 +26,13 @@ test('optional diagnostics cannot throw on malformed directories or disappearing
   try{assert.equal(await environmentEvidence(root,root),null);}finally{fs.readdir=read;}
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('oversized optional receipts never use whole-file reads or block diagnostics',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-quality-large-')),dir=path.join(root,'tests/environment-preflight'),original=fs.readFile;
+ let unbounded=0;
+ try{
+  await fs.mkdir(dir,{recursive:true});const file=path.join(dir,'receipt-large.json'),handle=await fs.open(file,'w');await handle.truncate(64*1024*1024);await handle.close();
+  fs.readFile=async(p,...args)=>{if(p===file){unbounded++;throw Error('whole-file read');}return original(p,...args);};
+  assert.equal(await environmentEvidence(root,root),null);assert.equal(unbounded,0);
+ }finally{fs.readFile=original;await fs.rm(root,{recursive:true,force:true});}
+});

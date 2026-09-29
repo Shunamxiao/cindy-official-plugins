@@ -1,5 +1,14 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch}=require('../node/engine.cjs');
+test('freeze requires Python only before new publication and retains calibrated material',()=>fixture(async(root)=>{
+ const cal=await dispatch('calibrate',{root,id:'sample',revision:'v1'}),p={root,checkId:cal.checkId},old=process.env.PATH,mkdtemp=fs.mkdtemp;
+ try{
+  process.env.PATH=root;fs.mkdtemp=async()=>{throw Error('must preflight before staging');};
+  await assert.rejects(dispatch('freeze',p),{code:'PYTHON_UNAVAILABLE'});
+ }finally{process.env.PATH=old;fs.mkdtemp=mkdtemp;}
+ const first=await dispatch('freeze',p);
+ try{process.env.PATH=root;assert.deepEqual(await dispatch('freeze',p),first);}finally{process.env.PATH=old;}
+}));
 test('missing Python leaves calibration unexecuted and recoverable without a failed report',()=>fixture(async(root)=>{
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0},old=process.env.PATH;
  try{

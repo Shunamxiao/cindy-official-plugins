@@ -39,7 +39,7 @@ module.exports=function installSteps({home,within,validate,checkPlatform,verifyS
   const abort=()=>p.kill('SIGKILL');op.controller.signal.addEventListener('abort',abort,{once:true});if(op.controller.signal.aborted)abort();
   let pending,ended=false,failure;
   const closed=new Promise(resolve=>p.once('close',()=>{ended=true;op.controller.signal.removeEventListener('abort',abort);if(pending){pending.reject(failure||invalid());pending=null;}resolve();}));
-  p.on('error',()=>{failure=require('./python-runtime.cjs').unavailable();if(pending){pending.reject(failure);pending=null;}});
+  p.on('error',e=>{failure=require('./python-runtime.cjs').startupError(e.code);if(pending){pending.reject(failure);pending=null;}});
   p.stdin.on('error',()=>{});
   const lines=readline.createInterface({input:p.stdout});
   lines.on('line',line=>{if(!pending)return;const r=pending;pending=null;try{const value=JSON.parse(line);if(value.error||typeof value.done!=='boolean')throw invalid();r.resolve(value);}catch(e){r.reject(e);}});
@@ -91,7 +91,7 @@ module.exports=function installSteps({home,within,validate,checkPlatform,verifyS
  }
  async function step(op,p){
   op.controller.signal.throwIfAborted();
-  if(!op.identity)await initialize(op,p);
+  if(!op.identity){await initialize(op,p);if(op.phase==='copy')return {done:false,phase:'copy'};}
   if(op.identity!==JSON.stringify([p.indexId,p.question]))throw Error('Install owner changed');
   if(op.phase==='cached'){
    try{if(await hashStep(op)){await verifySpec(op.target,op.q);return {done:true,result:op.result};}}

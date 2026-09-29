@@ -35,6 +35,15 @@ test('extractor startup failure retains the Python diagnostic and cleans owned s
  try{await assert.rejects(svc.step({...p,...op}),{code:'PYTHON_UNAVAILABLE'});}finally{process.env.PATH=oldPath;await svc.cancel({...p,...op});}
  assert.deepEqual((await fs.readdir(path.join(root,'online'))).filter(x=>/staging-|archive-copy-/.test(x)),[]);
 }));
+test('extractor resource and permission failures retain their cause instead of suggesting installation',()=>fixture(async({root,svc,p})=>{
+ const spawn=cp.spawn;
+ for(const code of ['EACCES','EMFILE','EAGAIN']){
+  const op=svc.begin(p);let result;do{result=await svc.step({...p,...op});}while(result.phase!=='extract');
+  cp.spawn=(command,args,options)=>{const child=spawn(path.join(root,'missing-python'),args,options);child.once('error',e=>{e.code=code;});return child;};
+  try{await assert.rejects(svc.step({...p,...op}),e=>e.code===code&&!/安装 Python/.test(e.message));}finally{cp.spawn=spawn;await svc.cancel({...p,...op});}
+ }
+ assert.deepEqual((await fs.readdir(path.join(root,'online'))).filter(x=>/staging-|archive-copy-/.test(x)),[]);
+}));
 test('cancelling any stage preserves the installed bank and removes only operation-owned files',()=>fixture(async({root,svc,p,q})=>{
  for(const phase of ['copy','extract','verify']){
   const op=svc.begin(p);let result;

@@ -82,12 +82,12 @@ test('known missing draft input releases authoring without creating a task or re
 });
 test('download cancellation failure still reaches the registered installer',async()=>{
  for(const failure of ['reject','non-ok']){
- const b=bridge(),request=b.cindy.node.request;let enter,release,cancelled=0;
+ const b=bridge(),request=b.cindy.node.request;let enter,release,cancelled=0,prepared=false;
  const ready=new Promise(r=>enter=r),pending=new Promise(r=>release=r);
  b.cindy.downloads.cancel=async()=>{if(failure==='non-ok')return {ok:false,message:'download transport lost'};throw Error('download transport lost');};
  b.cindy.node.request=async x=>{
   if(x.method==='online_plan')return {ok:true,result:{artifacts:[{sha256:'fixture',url:'https://example.test/a',bytes:1}]}};
-  if(x.method==='online_step'){enter();await pending;return {ok:true,result:{done:true,result:{}}};}
+  if(x.method==='online_step'){if(!prepared){prepared=true;return {ok:true,result:{done:false,phase:'copy'}};}enter();await pending;return {ok:true,result:{done:true,result:{}}};}
   if(x.method==='online_cancel'){cancelled++;return {ok:true,result:{}};}
   return request(x);
  };
@@ -316,14 +316,24 @@ test('imported suffix cannot replace a default question and missing qualified ke
 });
 test('online install forwards opaque receipts and rejects an old path-only host',async()=>{
  for(const modern of [true,false]){
-  const b=bridge(),hash='a'.repeat(64),request=b.cindy.node.request;
-  b.cindy.node.request=async x=>x.method==='online_plan'?{ok:true,result:{artifacts:[{sha256:hash,bytes:6,url:'https://github.com/file'}]}}:request(x);
+  const b=bridge(),hash='a'.repeat(64),request=b.cindy.node.request;let prepared=false;
+  b.cindy.node.request=async x=>{if(x.method==='online_step'&&!prepared){prepared=true;return {ok:true,result:{done:false,phase:'copy'}};}return x.method==='online_plan'?{ok:true,result:{artifacts:[{sha256:hash,bytes:6,url:'https://github.com/file'}]}}:request(x);};
   b.cindy.downloads={start:async()=>modern?{ok:true,token:'host-receipt'}:{ok:true,path:'/private/host/file'},cancel:async()=>({ok:true})};
   await b.ui('download','online_install',{indexId:'index',question:'audio@v2'});
   const call=b.calls.find(x=>x.method==='online_step');
   if(modern){assert.deepEqual({...call.downloadTokens},{['artifact_'+hash]:'host-receipt'});assert.equal(call.params.requireHostDownloads,true);assert.equal(call.params.hostArtifacts,undefined);}
   else {assert.equal(call,undefined);assert.equal(b.replies.at(-1).ok,false);}
  }
+});
+test('online installation reuses the verified cache without Python planning or downloads',async()=>{
+ const b=bridge(),request=b.cindy.node.request;let steps=0;
+ b.cindy.downloads=undefined;
+ b.cindy.node.request=async x=>{
+  if(x.method==='online_plan')throw Error('Python 3 unavailable');
+  if(x.method==='online_step')return {ok:true,result:++steps===1?{done:false,phase:'cached'}:{done:true,result:{bank:'/bank/fixture',key:'audio@v2'}}};
+  return request(x);
+ };
+ await b.ui('cached-install','online_install',{});assert.equal(b.replies.find(r=>r.id==='cached-install').ok,true);assert.equal(steps,2);
 });
 test('one coordinator uses exact route, isolated workspace and stable keys; duplicate clicks do not pay twice',async()=>{
  const b=bridge();await Promise.all([b.ui('same','start',args),b.ui('same','start',args)]);assert.equal(b.calls.filter(x=>x.send).length,1);assert.equal(b.calls.filter(x=>x.create).length,1);assert.equal(b.calls.find(x=>x.create).create.isolatedWorkspace,true);assert.equal(b.calls.find(x=>x.create).create.route.providerId,'own-account');assert.equal(b.calls.find(x=>x.method==='prepare').params.executionChannel,'Orca Worker');assert.equal(b.calls.filter(x=>x.task).length,0);
@@ -874,9 +884,9 @@ test('installer cleanup failure cannot override a published installation',async(
  await b.ui('install','online_install',{});assert.equal(b.replies.find(r=>r.id==='install').ok,true);assert.equal(b.replies.filter(r=>r.type==='download-progress').at(-1).phase,'ready');
 });
 test('download cancellation failure still advances coordinator stop without status polling',async()=>{
- const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let enter,release;
+ const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let enter,release,prepared=false;
  const ready=new Promise(r=>enter=r),held=new Promise(r=>release=r);
- b.cindy.node.request=async x=>{if(x.method==='online_step'){enter();await held;return {ok:true,result:{done:true,result:{}}};}return request(x);};
+ b.cindy.node.request=async x=>{if(x.method==='online_step'){if(!prepared){prepared=true;return {ok:true,result:{done:false,phase:'copy'}};}enter();await held;return {ok:true,result:{done:true,result:{}}};}return request(x);};
  b.cindy.downloads.cancel=async()=>({ok:false,message:'cancel unavailable'});
  // Keep the download id live through unpacking.
  const prior=b.cindy.node.request;b.cindy.node.request=async x=>x.method==='online_plan'?{ok:true,result:{artifacts:[{sha256:'x',url:'https://example.test/a',bytes:1}]}}:prior(x);
@@ -895,11 +905,12 @@ test('failure recording applies a recovered assessment before releasing the work
  }
 });
 
-test('each installation step receives the same Host tokens and unchanged Node deadline',async()=>{
- const b=bridge(),request=b.cindy.node.request;let steps=0;
+test('each copy and extraction step receives the same Host tokens and unchanged Node deadline',async()=>{
+ const b=bridge(),request=b.cindy.node.request;let steps=0,prepared=false;
  b.cindy.node.request=async x=>{
   if(x.method==='online_plan')return {ok:true,result:{artifacts:[{sha256:'a'.repeat(64),url:'https://example.test/bank.zip',bytes:10}]}};
   if(x.method==='online_step'){
+   if(!prepared){prepared=true;assert.equal(x.downloadTokens,undefined);return {ok:true,result:{done:false,phase:'copy'}};}
    assert.equal(x.downloadTokens['artifact_'+'a'.repeat(64)],'fixture');assert.equal(x.maxTotalMs,900000);
    assert.equal(x.params.operationId,'install-fixture');steps++;
    return {ok:true,result:steps<4?{done:false,phase:'extract'}:{done:true,result:{bank:'/bank/fixture',key:'audio@v2'}}};
