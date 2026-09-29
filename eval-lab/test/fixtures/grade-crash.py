@@ -3,6 +3,7 @@ import errno, os, pathlib, runpy, shutil, sys, time
 
 runner, phase, marker, *arguments = sys.argv[1:]
 sys.argv = [runner, *arguments]
+sys.path.insert(0, str(pathlib.Path(runner).parent))
 original_link, original_copy = os.link, shutil.copytree
 original_read = pathlib.Path.read_bytes
 

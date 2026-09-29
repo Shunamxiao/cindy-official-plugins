@@ -4,11 +4,11 @@ import hashlib
 import json
 import os
 import pathlib
-import types
 import shutil
 import sys
 import tempfile
 import time
+from verified_grader import read_entry, execute_entry
 
 
 def publish(target, value):
@@ -63,8 +63,8 @@ def main():
         if execution_path.exists():
             return 0
         # Execute the same bytes that match the registered entrypoint, not a later read.
-        grader_bytes = grader.read_bytes()
-        if hashlib.sha256(grader_bytes).hexdigest() != expected_grader_hash:
+        grader_bytes = read_entry(grader, expected_grader_hash)
+        if grader_bytes is None:
             return 76
         # Incomplete attempts remain separate. A surviving test subprocess cannot
         # write into a later attempt's copy. The paid workspace is never changed.
@@ -75,22 +75,7 @@ def main():
         hashes(snapshot)
         context = {'receipt': receipt, 'gradingStartedAt': int(time.time() * 1000)}
         publish(attempt / 'grading-context.json', context)
-        sys.argv = [str(grader), str(snapshot), str(output)]
-        sys.path.insert(0, str(grader.parent))
-        code = 0
-        previous_main = sys.modules['__main__']
-        module = types.ModuleType('__main__')
-        module.__dict__.update(__file__=str(grader), __package__='', __spec__=None,
-                               __loader__=None, __cached__=None)
-        sys.modules['__main__'] = module
-        try:
-            exec(compile(grader_bytes, str(grader), 'exec'), module.__dict__)
-        except SystemExit as error:
-            code = error.code if isinstance(error.code, int) else (0 if error.code is None else 1)
-        except Exception:
-            code = 1
-        finally:
-            sys.modules['__main__'] = previous_main
+        code = execute_entry(grader, grader_bytes, snapshot, output)
         publish(execution_path, {'code': code, 'timedOut': False,
                                 'attempt': attempt.name, 'submissionHashes': hashes(snapshot)})
         return 0

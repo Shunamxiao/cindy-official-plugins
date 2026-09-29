@@ -18,3 +18,15 @@ test('scope reads bounded bytes from oversized public files and preserves UTF-8 
  const text='汉😀'.repeat(1000);await fs.writeFile(path.join(root,'TASK.md'),text);assert.ok((await taskScope(root,'Fix project')).includes(text));
  }finally{fs.readFile=readFile;await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('public scope hashes the same bounded bytes before decoding, including absent manifest files',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-scope-binding-')),crypto=require('node:crypto');
+ try{
+  const text='原始范围 😀',hash=crypto.createHash('sha256').update(text).digest('hex'),expected={'candidate/TASK.md':hash};
+  await fs.writeFile(path.join(root,'TASK.md'),text);await fs.writeFile(path.join(root,'ENVIRONMENT.md'),'unregistered instructions');
+  assert.ok(!(await taskScope(root,'Fix',expected)).includes('unregistered'));
+  await fs.writeFile(path.join(root,'TASK.md'),'replacement');await assert.rejects(taskScope(root,'Fix',expected),/Question package changed/);
+  await fs.writeFile(path.join(root,'TASK.md'),text);assert.ok((await taskScope(root,'Fix',expected)).includes(text));
+  await fs.unlink(path.join(root,'TASK.md'));await assert.rejects(taskScope(root,'Fix',expected),{code:'ENOENT'});
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

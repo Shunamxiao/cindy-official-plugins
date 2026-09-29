@@ -239,3 +239,20 @@ test('calibration discovery ignores Finder metadata and non-snapshot entries',()
  assert.deepEqual(await dispatch('drafts',{root}),[]);
  assert.equal(await fs.readFile(path.join(parent,'.DS_Store'),'utf8'),'unrelated');
 }));
+
+test('calibration does not grade a control group copied from another draft version',()=>fixture(async(root,directory)=>{
+ const p={root,id:'sample',revision:'v1'},a=await dispatch('calibrate_begin',p),copy=fs.cp;
+ fs.cp=async(...args)=>{await copy(...args);await fs.writeFile(path.join(args[1],'answer'),'yes');};
+ try{await assert.rejects(dispatch('calibrate_step',{root,checkId:a.checkId,step:0}),/Draft changed/);}
+ finally{fs.cp=copy;}
+ const attempt=path.join(root,'eval-lab-data/calibrations',a.checkId,'attempt-0');
+ await assert.rejects(fs.access(path.join(attempt,'source/executed')),{code:'ENOENT'});
+ assert.equal((await dispatch('calibrate_step',{root,checkId:a.checkId,step:0})).scoreExact,'0');
+}));
+test('calibration rejects a swapped grader before executing it under the earlier plan',()=>fixture(async(root,directory)=>{
+ const cp=require('node:child_process'),sync=require('node:fs'),spawn=cp.spawn,p={root,id:'sample',revision:'v1'};
+ const {checkId}=await dispatch('calibrate_begin',p),grader=path.join(directory,'author/grade.py'),original=await fs.readFile(grader);
+ cp.spawn=function(command,args,options){sync.writeFileSync(grader,"import json,sys,pathlib\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':True}}))\n");return spawn.call(this,command,args,options);};
+ try{const result=await dispatch('calibrate_step',{root,checkId,step:0});assert.equal(result.status,'environment_invalid');assert.equal(result.scoreExact,null);}
+ finally{cp.spawn=spawn;await fs.writeFile(grader,original);}
+}));

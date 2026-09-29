@@ -96,7 +96,7 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
  }
  async function step(p){
   if(!Number.isInteger(p.step)||p.step<0||p.step>=names.length)throw Error('Invalid calibration step');
-  const {checks,dir,spec}=await context(p),name=names[p.step],resultPath=path.join(checks,'step-'+p.step+'.json');
+  const {checks,plan,dir,spec}=await context(p),name=names[p.step],resultPath=path.join(checks,'step-'+p.step+'.json');
   try{return publicStep(receipt(await read(resultPath),name,spec));}catch(e){if(e.code!=='ENOENT')throw e;}
   // A durable attempt marker prevents replay of an unknown or still-running process.
   // Completed receipts are reusable; unknown attempts are never replayed.
@@ -116,9 +116,13 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
    return publicStep(result);
   }
   const source=path.join(attempt,'source'),output=path.join(attempt,'grade.json');
-  try{await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});}
-  catch(error){try{await fs.rm(attempt,{recursive:true,force:true});}catch(cleanup){throw inputError(cleanup,true);}throw inputError(error);}
-  const execution=await runCommand('python3',['-B',path.join(dir,'author/grade.py'),source,output]);
+  try{
+   await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});
+   const expected=Object.fromEntries(Object.entries(plan.hashes).filter(([key])=>key.startsWith(name+'/')).map(([key,hash])=>[key.slice(name.length+1),hash]));
+   if(JSON.stringify(await files(source))!==JSON.stringify(expected))throw Object.assign(Error('Draft changed; recalibrate'),{code:'DRAFT_CHANGED'});
+  }
+  catch(error){try{await fs.rm(attempt,{recursive:true,force:true});}catch(cleanup){throw inputError(cleanup,true);}throw error.code==='DRAFT_CHANGED'?error:inputError(error);}
+  const execution=await runCommand('python3',['-B',path.join(__dirname,'verified_grader.py'),path.join(dir,'author/grade.py'),plan.hashes['author/grade.py'],source,output]);
   let raw,calculated;
   try{raw=await read(output);if(execution.code!==0||execution.timedOut)raw={status:'environment_invalid',reason:'Grader process failed or timed out'};if(!raw||!['graded','environment_invalid'].includes(raw.status))throw Error('Invalid grader result status');if(raw.status==='graded')calculated=score(spec,raw.items);}catch(e){raw={status:'environment_invalid',reason:e.message};}
   const result={name,status:raw.status,score:calculated?.value??null,scoreExact:calculated?.exact??null,execution,raw};
