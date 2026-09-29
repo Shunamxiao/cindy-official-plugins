@@ -52,7 +52,7 @@ test('partial index writes leave published data intact, preserve storage error c
 test('download sink errors retain actionable storage diagnostics',async()=>{
  const source=await fs.readFile(path.join(__dirname,'../node/online.cjs'),'utf8'),{EventEmitter}=require('node:events'),{Readable,Writable}=require('node:stream');
  for(const code of ['ENOSPC','EACCES','EDQUOT']){
-  const module={exports:{}};vm.runInNewContext(source,{module,require:id=>id==='node:https'?{get:(u,o,cb)=>{const req=new EventEmitter();req.setTimeout=()=>{};process.nextTick(()=>{const s=Readable.from(['data']);s.statusCode=200;cb(s);});return req;}}:id==='node:fs'?{...require(id),createWriteStream:()=>new Writable({write(c,e,done){done(Object.assign(Error('PRIVATE output'),{code,syscall:'write'}));}})}:require(id==='./question-platform.cjs'?'../node/question-platform.cjs':id),setTimeout,clearTimeout,URL,AbortController});
+  const module={exports:{}};vm.runInNewContext(source,{module,require:id=>id==='node:https'?{get:(u,o,cb)=>{const req=new EventEmitter();req.setTimeout=()=>{};process.nextTick(()=>{const s=Readable.from(['data']);s.statusCode=200;cb(s);});return req;}}:id==='node:fs'?{...require(id),createWriteStream:()=>new Writable({write(c,e,done){done(Object.assign(Error('PRIVATE output'),{code,syscall:'write'}));}})}:require(require('node:module').createRequire(path.join(__dirname,'../node/online.cjs')).resolve(id)),setTimeout,clearTimeout,URL,AbortController});
   await assert.rejects(module.exports.download(url,'unused',100),e=>e.code===code&&/磁盘空间/.test(e.message)&&!e.message.includes('PRIVATE'));
  }
 });

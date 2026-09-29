@@ -1,5 +1,6 @@
 'use strict';
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto'),cp=require('node:child_process'),readline=require('node:readline');
+const readMetadata=require('./read-metadata.cjs');
 const digest=x=>crypto.createHash('sha256').update(x).digest('hex');
 const invalid=()=>Object.assign(Error('Question content mismatch'),{code:'PACKAGE_INVALID'});
 const chunkSize=1024*1024;
@@ -52,7 +53,7 @@ module.exports=function installSteps({home,within,validate,checkPlatform,verifyS
   const release=digest(JSON.stringify(q)),dest=await within(h,'banks/'+release);
   Object.assign(op,{identity:JSON.stringify([p.indexId,p.question]),h,index,q,saved,release,dest,result:{bank:dest,key:q.key,title:q.title},checked:0});
   try{
-   const manifest=JSON.parse(await fs.readFile(path.join(dest,'distribution.json'),'utf8'));
+   const manifest=await readMetadata(path.join(dest,'distribution.json'));
    if(manifest.format!=='eval-lab-bank-v1'||JSON.stringify(manifest.questions)!==JSON.stringify([q]))throw invalid();
    op.target=path.join(dest,q.path);op.walk=entries(op.target);op.phase='cached';
   }catch(e){if(e.code!=='ENOENT'&&e.code!=='PACKAGE_INVALID'&&!(e instanceof SyntaxError))throw e;await stage(op);}

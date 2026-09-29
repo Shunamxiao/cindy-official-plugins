@@ -4,7 +4,8 @@ const {createReadStream}=require('node:fs');
 const {validateStorage,link}=require('./storage.cjs');
 const inputError=require('./input-error.cjs');
 const {sha,id,validateSpec,score,report,publicResult}=require('../lib/core.cjs');
-const read=async p=>JSON.parse(await fs.readFile(p,'utf8'));
+const readMetadata=require('./read-metadata.cjs');
+const read=async p=>['distribution.json','question.json'].includes(path.basename(p))?readMetadata(p):JSON.parse(await fs.readFile(p,'utf8'));
 // Immutable JSON becomes visible only after the complete file is closed; never replace a winner.
 const write=async(p,x)=>{
  await fs.mkdir(path.dirname(p),{recursive:true});
@@ -12,7 +13,7 @@ const write=async(p,x)=>{
  try{handle=await fs.open(tmp,'wx');await handle.writeFile(JSON.stringify(x,null,2)+'\n');await handle.close();handle=null;await link(tmp,p);}
  finally{if(handle)await handle.close();await fs.unlink(tmp).catch(()=>{});}
 };
-async function within(root,rel){if(typeof rel!=='string'||path.isAbsolute(rel)||rel.split(/[\\/]/).some(s=>!s||s==='.'||s==='..'))throw Error('Unsafe path');const base=await fs.realpath(root),p=path.resolve(base,rel);if(!p.startsWith(base+path.sep))throw Error('Outside root');let cur=base;for(const segment of rel.split('/')){cur=path.join(cur,segment);try{if((await fs.lstat(cur)).isSymbolicLink())throw Error('Symlink refused');}catch(e){if(e.code!=='ENOENT')throw e;}}return p;}
+async function within(root,rel){if(typeof rel!=='string'||rel.includes('\\')||path.isAbsolute(rel)||rel.split(/[\\/]/).some(s=>!s||s==='.'||s==='..'))throw Error('Unsafe path');const base=await fs.realpath(root),p=path.resolve(base,rel);if(!p.startsWith(base+path.sep))throw Error('Outside root');let cur=base;for(const segment of rel.split('/')){cur=path.join(cur,segment);try{if((await fs.lstat(cur)).isSymbolicLink())throw Error('Symlink refused');}catch(e){if(e.code!=='ENOENT')throw e;}}return p;}
 async function files(root,dir='',signal){signal?.throwIfAborted();const rows={};for(const e of (await fs.readdir(path.join(root,dir),{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){signal?.throwIfAborted();const rel=dir?dir+'/'+e.name:e.name;if(e.isSymbolicLink())throw Object.assign(Error('Symlink refused'),{code:'SYMLINK_REFUSED'});if(e.isDirectory())Object.assign(rows,await files(root,rel,signal));else if(e.isFile()){const hash=crypto.createHash('sha256');for await(const chunk of createReadStream(path.join(root,rel),{signal}))hash.update(chunk);rows[rel]=hash.digest('hex');}}return rows;}
 async function base(root){if(!path.isAbsolute(root))throw Error('Choose an absolute storage directory');root=await fs.realpath(root);const out=await within(root,'eval-lab-data');await fs.mkdir(out,{recursive:true});return out;}
 async function bankInfo(bank){const root=await fs.realpath(bank);const manifest=await read(path.join(root,'distribution.json'));if(!manifest||manifest.format!=='eval-lab-bank-v1')throw Error('Not an Eval Lab bank');return {root,manifest};}
