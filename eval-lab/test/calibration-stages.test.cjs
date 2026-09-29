@@ -1,5 +1,22 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch}=require('../node/engine.cjs');
+test('missing Python leaves calibration unexecuted and recoverable without a failed report',()=>fixture(async(root)=>{
+ const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0},old=process.env.PATH;
+ try{
+  process.env.PATH=root;
+  await assert.rejects(dispatch('calibrate_step',p),e=>e.code==='PYTHON_UNAVAILABLE'&&/Python 3.*PATH/.test(e.message));
+  await assert.rejects(fs.access(path.join(root,'eval-lab-data/calibrations',checkId,'attempt-0')),{code:'ENOENT'});
+  await assert.rejects(fs.access(path.join(root,'eval-lab-data/calibrations',checkId,'step-0.json')),{code:'ENOENT'});
+ }finally{process.env.PATH=old;}
+ assert.equal((await dispatch('calibrate_step',p)).status,'graded');
+}));
+test('Python disappearing after the probe does not create a calibration failure report',()=>fixture(async(root)=>{
+ const cp=require('node:child_process'),spawn=cp.spawn,{checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
+ cp.spawn=(command,args,options)=>spawn(args[0]==='-B'?path.join(root,'missing-python'):command,args,options);
+ try{await assert.rejects(dispatch('calibrate_step',p),{code:'PYTHON_UNAVAILABLE'});}finally{cp.spawn=spawn;}
+ await assert.rejects(fs.access(path.join(root,'eval-lab-data/calibrations',checkId,'attempt-0')),{code:'ENOENT'});
+ assert.equal((await dispatch('calibrate_step',p)).status,'graded');
+}));
 test('calibration rejects a scoring spec replaced after plan hash verification',()=>fixture(async(root,directory)=>{
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),file=path.join(directory,'question.json'),original=await fs.readFile(file),open=fs.open;
  const p={root,checkId,step:0};
@@ -12,7 +29,7 @@ test('calibration rejects a scoring spec replaced after plan hash verification',
 }));
 test('explicit retry retains the failed report and has a stable identity after lost replies',()=>fixture(async(root)=>{
  const p={root,id:'sample',revision:'v1'},child=require('node:child_process'),spawn=child.spawn;
- child.spawn=(command,args,options)=>spawn(path.join(root,'missing-python'),args,options);
+ child.spawn=(command,args,options)=>spawn(command,args[0]==='-B'?['-c','raise SystemExit(1)']:args,options);
  let failed;
  try{failed=await dispatch('calibrate',p);}finally{child.spawn=spawn;}
  const old=path.join(root,'eval-lab-data/calibrations',failed.checkId,'calibration.json'),bytes=await fs.readFile(old);
@@ -45,14 +62,16 @@ test('explicit retry rejects unfinished or unknown calibration executions',()=>f
  await assert.rejects(dispatch('calibrate_begin',{...p,retryFrom:a.checkId}),/retry|重试/);
  assert.equal((await fs.readdir(path.join(root,'eval-lab-data/calibrations'))).length,1);
 }));
-test('spawn failure receipts remain readable and finish without re-executing',()=>fixture(async(root)=>{
+test('failed grader receipts remain readable without Python and finish without re-executing',()=>fixture(async(root)=>{
  const cp=require('node:child_process'),spawn=cp.spawn;
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId};
- let starts=0;cp.spawn=(command,args,options)=>{starts++;return spawn(path.join(root,'missing-python'),args,options);};
+ let starts=0;cp.spawn=(command,args,options)=>{if(args[0]==='-B'){starts++;return spawn(command,['-c','raise SystemExit(1)'],options);}return spawn(command,args,options);};
  try{for(let step=0;step<3;step++)assert.equal((await dispatch('calibrate_step',{...p,step})).status,'environment_invalid');}finally{cp.spawn=spawn;}
  const folder=path.join(root,'eval-lab-data/calibrations',checkId);
  const file=path.join(folder,'step-0.json'),value=JSON.parse(await fs.readFile(file,'utf8'));
  assert.equal(value.execution.timedOut,false);assert.equal(starts,3);
+ const originalPath=process.env.PATH;process.env.PATH=root;
+ try{
  await fs.rename(file,path.join(folder,'attempt-0/receipt.json'));
  assert.equal((await dispatch('calibrate_step',{...p,step:0})).status,'environment_invalid');
  assert.equal((await dispatch('calibrate_step',{...p,step:1})).status,'environment_invalid');
@@ -61,6 +80,7 @@ test('spawn failure receipts remain readable and finish without re-executing',()
  value.status='graded';value.raw={status:'graded',items:{a:false}};value.score=0;value.scoreExact='0';
  await fs.writeFile(file,JSON.stringify(value));
  await assert.rejects(dispatch('calibrate_step',{...p,step:0}),/receipt mismatch/);
+ }finally{process.env.PATH=originalPath;}
 }));
 test('completed unpublished calibration receipt recovers without executing the grader again',()=>fixture(async(root)=>{
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
@@ -151,7 +171,7 @@ test('malformed grader output becomes a readable ungraded receipt without replay
 test('known input copy failure removes only its unstarted attempt and permits retry',()=>fixture(async(root)=>{
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId,step:0};
  const copy=fs.cp,child=require('node:child_process'),spawn=child.spawn;let starts=0;
- child.spawn=(...args)=>{starts++;return spawn(...args);};
+ child.spawn=(...args)=>{if(args[1][0]==='-B')starts++;return spawn(...args);};
  try{
   fs.cp=async(...args)=>{await copy(...args);throw Object.assign(Error('copy full'),{code:'ENOSPC'});};
   await assert.rejects(dispatch('calibrate_step',p),/磁盘空间/);assert.equal(starts,0);
@@ -262,7 +282,7 @@ test('calibration does not grade a control group copied from another draft versi
 test('calibration rejects a swapped grader before executing it under the earlier plan',()=>fixture(async(root,directory)=>{
  const cp=require('node:child_process'),sync=require('node:fs'),spawn=cp.spawn,p={root,id:'sample',revision:'v1'};
  const {checkId}=await dispatch('calibrate_begin',p),grader=path.join(directory,'author/grade.py'),original=await fs.readFile(grader);
- cp.spawn=function(command,args,options){sync.writeFileSync(grader,"import json,sys,pathlib\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':True}}))\n");return spawn.call(this,command,args,options);};
+ cp.spawn=function(command,args,options){if(args[0]==='-B')sync.writeFileSync(grader,"import json,sys,pathlib\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':True}}))\n");return spawn.call(this,command,args,options);};
  try{const result=await dispatch('calibrate_step',{root,checkId,step:0});assert.equal(result.status,'environment_invalid');assert.equal(result.scoreExact,null);}
  finally{cp.spawn=spawn;await fs.writeFile(grader,original);}
 }));

@@ -118,12 +118,17 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   }
   const source=path.join(attempt,'source'),output=path.join(attempt,'grade.json');
   try{
+   await require('./python-runtime.cjs').preflight(runCommand);
    await fs.cp(path.join(dir,name),source,{recursive:true,errorOnExist:true,force:false});
    const expected=Object.fromEntries(Object.entries(plan.hashes).filter(([key])=>key.startsWith(name+'/')).map(([key,hash])=>[key.slice(name.length+1),hash]));
    if(JSON.stringify(await files(source))!==JSON.stringify(expected))throw Object.assign(Error('Draft changed; recalibrate'),{code:'DRAFT_CHANGED'});
   }
-  catch(error){try{await fs.rm(attempt,{recursive:true,force:true});}catch(cleanup){throw inputError(cleanup,true);}throw error.code==='DRAFT_CHANGED'?error:inputError(error);}
+  catch(error){try{await fs.rm(attempt,{recursive:true,force:true});}catch(cleanup){throw inputError(cleanup,true);}throw ['DRAFT_CHANGED','PYTHON_UNAVAILABLE'].includes(error.code)?error:inputError(error);}
   const execution=await runCommand('python3',['-B',path.join(__dirname,'verified_grader.py'),path.join(dir,'author/grade.py'),plan.hashes['author/grade.py'],source,output]);
+  if(execution.errorCode){
+   try{await fs.rm(attempt,{recursive:true,force:true});}catch(error){throw inputError(error,true);}
+   throw require('./python-runtime.cjs').unavailable();
+  }
   let raw,calculated;
   try{raw=await read(output);if(execution.code!==0||execution.timedOut)raw={status:'environment_invalid',reason:'Grader process failed or timed out'};if(!raw||!['graded','environment_invalid'].includes(raw.status))throw Error('Invalid grader result status');if(raw.status==='graded')calculated=score(spec,raw.items);}catch(e){raw={status:'environment_invalid',reason:e.message};}
   const result={name,status:raw.status,score:calculated?.value??null,scoreExact:calculated?.exact??null,execution,raw};

@@ -16,7 +16,7 @@ test('cancel drains the unpack process, removes staging, preserves installed ban
    files:async(...args)=>{if(phase==='verify'&&args[0].includes('staging-')){started();await barrier;}return files(...args);},
    fetchFile:async(_,dest)=>{const b=Buffer.from(JSON.stringify(index));await fs.writeFile(dest,b);return {sha256:hash(b),bytes:b.length};},
    runCommand:async(command,args,options)=>{
-    if(phase!=='unpack')return runCommand(command,args,options);
+    if(phase!=='unpack'||args[0]==='-I')return runCommand(command,args,options);
     const running=runCommand('python3',['-c',"import pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text('ready');time.sleep(30)",marker],options);
     for(let i=0;i<200;i++){try{await fs.stat(marker);started();break;}catch{await new Promise(r=>setTimeout(r,10));}}
     return running;

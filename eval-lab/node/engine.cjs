@@ -29,7 +29,7 @@ async function runCommand(command,args,{cwd,timeout=840000,signal,input}={}){
   const cleanup=()=>{clearTimeout(timer);signal?.removeEventListener('abort',kill);};
   signal?.addEventListener('abort',kill,{once:true});if(signal?.aborted)kill();
   p.stdout.on('data',d=>out=(out+d).slice(-100000));p.stderr.on('data',d=>err=(err+d).slice(-100000));
-  p.on('error',e=>{cleanup();resolve({code:null,error:e.message,timedOut,stdout:out,stderr:err});});
+  p.on('error',e=>{cleanup();resolve({code:null,error:e.message,errorCode:e.code,timedOut,stdout:out,stderr:err});});
   // Wait for close before callers remove staging files the child may be writing.
   p.on('close',(code,exitSignal)=>{cleanup();resolve({code,signal:exitSignal,timedOut,stdout:out,stderr:err});});
  });
@@ -38,11 +38,7 @@ const {environmentEvidence,timing,ms}=require('./execution-quality.cjs');
 const {taskScope}=require('./task-scope.cjs');
 const online=require('./online.cjs').service({base,within,files,runCommand});
 const RUN_PROMPT='独立检查此项目，依据 TASK.md 与产品约定修复可证实的问题，运行验证，在 BUGS_FOUND.md 记录问题、证据与结果并报告。仅使用本工作目录，不修改题面、已有测试或运行环境，不委派。';
-async function preflight(){
- const r=await runCommand('python3',['-I','-c','import sys; sys.exit(0 if sys.version_info.major == 3 else 1)'],{timeout:10000});
- if(r.code!==0||r.timedOut)throw Error('Python 3 无法运行，请安装 Python 3 并确保 Cindy 的 PATH 能找到 python3，重启 Cindy 后重试；尚未开始模型作答。');
- return {ok:true};
-}
+async function preflight(){return require('./python-runtime.cjs').preflight(runCommand);}
 async function prepare(p){await preflight();if(p.question.startsWith('imported:')){const [,bankId,...keys]=p.question.split(':');const b=(p.importedBanks||[]).find(b=>b.id===bankId);if(!b)throw Error('Imported bank unavailable');p={...p,bank:b.path,question:keys.join(':')};}if(p.question.startsWith('online:')){const [,release,...key]=p.question.split(':');if(!/^[a-f0-9]{64}$/.test(release))throw Error('Invalid release');p={...p,bank:await within(await base(p.root),'online/banks/'+release),question:key.join(':')};}if(p.question.startsWith('custom:'))p={...p,bank:path.join(await base(p.root),'custom-bank'),question:p.question.slice(7)};const home=await base(p.root);const {q,dir,spec}=await verifyQuestion(p.bank,p.question);const authorizationScope=await taskScope(path.join(dir,'candidate'),RUN_PROMPT,q.files);require('./question-platform.cjs').checkPlatform(spec.environment);for(const k of ['model','harness','effort','provider'])if(typeof p[k]!=='string'||!p[k].trim())throw Error('Actual '+k+' is required');const runId=p.runId?id(p.runId):crypto.randomUUID(),runDir=await within(home,'runs/'+runId);await fs.mkdir(runDir,{recursive:true});const workspace=p.workspace?await fs.realpath(p.workspace):path.join(runDir,'workspace');if(p.workspace){if(!path.isAbsolute(p.workspace)||(await fs.lstat(p.workspace)).isSymbolicLink())throw Error('Workspace must be a real absolute directory');}try{const old=await read(path.join(runDir,'run.json'));if(old.question!==p.question||old.model!==p.model||old.provider!==p.provider||old.effort!==p.effort||old.harness!==p.harness||old.workspace!==workspace)throw Error('Run identity conflict');return {...old,workspace,prompt:RUN_PROMPT,authorizationScope};}catch(e){if(e.code!=='ENOENT')throw e;}const record={runId,batchId:p.batchId??null,questionId:spec.id,title:spec.title,revision:spec.revision,releaseHash:q.sourceManifestSha256,distributionHash:sha(JSON.stringify(q.files)),bank:await fs.realpath(p.bank),question:p.question,model:p.model,harness:p.harness,effort:p.effort,provider:p.provider,status:'prepared',createdAt:new Date().toISOString(),workspace,executionChannel:p.executionChannel==='Cindy task'?'Cindy task':'Orca Worker',costUSD:null};const r=await require('./prepare-copy.cjs')({runDir,workspace,candidate:path.join(dir,'candidate'),expectedHashes:Object.fromEntries(Object.entries(q.files).filter(([name])=>name.startsWith('candidate/')).map(([name,hash])=>[name.slice(10),hash])),record,read,write,files,within});return {...r,workspace,prompt:RUN_PROMPT,authorizationScope};}
 
 async function loadRun(p){const dir=await within(await base(p.root),'runs/'+id(p.runId));return {dir,r:await read(path.join(dir,'run.json'))};}
@@ -77,7 +73,9 @@ async function grade(p){
  let execution;
  try{execution=await read(path.join(dir,'grader-execution.json'));}catch(e){if(e.code!=='ENOENT')throw e;}
  if(!execution){
+  await preflight();
   const processResult=await runCommand('python3',['-B',path.join(__dirname,'grade-run.py'),dir,r.workspace||path.join(dir,'workspace'),path.join(questionDir,'author/grade.py'),q.files['author/grade.py']],{input:JSON.stringify(p.receipt)});
+  if(processResult.errorCode)throw require('./python-runtime.cjs').unavailable();
   if(processResult.code===76)throw Error('Grader changed; restore the question version and resume grading.');
   if(processResult.code===75)throw Error('评分仍在运行或执行状态未知，已有作答保留，不会重复评分。');
   if(processResult.code===74){const code=/EVAL_INPUT_ERROR:([A-Z_]+)/.exec(processResult.stderr)?.[1]||'EIO';throw inputError({code},false,'评分快照');}

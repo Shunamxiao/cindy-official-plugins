@@ -31,7 +31,8 @@ test('a killed result publication recovers from process evidence without running
  const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
  await killAtPublication('grade',request,'grading-completion.json');
  assert.equal(await fs.readFile(path.join(dir,'executions'),'utf8'),'x');
- assert.equal((await dispatch('grade',request)).score,1);
+ const oldPath=process.env.PATH;process.env.PATH=p.root;
+ try{assert.equal((await dispatch('grade',request)).score,1);assert.equal((await dispatch('grade',request)).score,1);}finally{process.env.PATH=oldPath;}
  assert.equal(await fs.readFile(path.join(dir,'executions'),'utf8'),'x');
  assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
 }));

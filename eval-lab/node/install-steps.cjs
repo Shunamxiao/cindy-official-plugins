@@ -5,7 +5,7 @@ const digest=x=>crypto.createHash('sha256').update(x).digest('hex');
 const invalid=()=>Object.assign(Error('Question content mismatch'),{code:'PACKAGE_INVALID'});
 const chunkSize=1024*1024;
 // Each operation owns its archives. Borrowed Host files are closed before a step returns.
-module.exports=function installSteps({home,within,validate,checkPlatform,verifySpec,platform,arch,stepBytes=32*1024*1024}){
+module.exports=function installSteps({home,within,validate,checkPlatform,verifySpec,preflight,platform,arch,stepBytes=32*1024*1024}){
  const limit=Math.max(1,Math.min(stepBytes,32*1024*1024));
  async function* entries(root,rel=''){
   for(const e of (await fs.readdir(path.join(root,rel),{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){
@@ -39,7 +39,7 @@ module.exports=function installSteps({home,within,validate,checkPlatform,verifyS
   const abort=()=>p.kill('SIGKILL');op.controller.signal.addEventListener('abort',abort,{once:true});if(op.controller.signal.aborted)abort();
   let pending,ended=false,failure;
   const closed=new Promise(resolve=>p.once('close',()=>{ended=true;op.controller.signal.removeEventListener('abort',abort);if(pending){pending.reject(failure||invalid());pending=null;}resolve();}));
-  p.on('error',e=>{failure=e;if(pending){pending.reject(e);pending=null;}});
+  p.on('error',()=>{failure=require('./python-runtime.cjs').unavailable();if(pending){pending.reject(failure);pending=null;}});
   p.stdin.on('error',()=>{});
   const lines=readline.createInterface({input:p.stdout});
   lines.on('line',line=>{if(!pending)return;const r=pending;pending=null;try{const value=JSON.parse(line);if(value.error||typeof value.done!=='boolean')throw invalid();r.resolve(value);}catch(e){r.reject(e);}});
@@ -59,6 +59,7 @@ module.exports=function installSteps({home,within,validate,checkPlatform,verifyS
   }catch(e){if(e.code!=='ENOENT'&&e.code!=='PACKAGE_INVALID'&&!(e instanceof SyntaxError))throw e;await stage(op);}
  }
  async function stage(op){
+  await preflight();
   op.staging=await fs.mkdtemp(path.join(op.h,'staging-'));op.target=path.join(op.staging,op.q.path);
   await fs.mkdir(op.target,{recursive:true});op.archives=[...new Set(op.q.layers.map(l=>l.artifact))];op.archiveIndex=0;op.offset=0;op.phase='copy';op.file=null;
   op.archiveDir=await fs.mkdtemp(path.join(op.h,'archive-copy-'));

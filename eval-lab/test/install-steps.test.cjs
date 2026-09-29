@@ -25,7 +25,15 @@ test('one compressed large entry advances across requests and never reads borrow
  assert.ok(extracts>10);assert.ok(checks>10);assert.deepEqual(await files(path.join(result.result.bank,q.path)),await files(source));
  await svc.cancel({...p,...op});assert.deepEqual((await fs.readdir(path.join(root,'online'))).filter(x=>/staging-|archive-copy-/.test(x)),[]);
  // Installed cache verification itself is also bounded and needs no borrowed file.
- const cached=svc.begin(p);let n=0;do{result=await svc.step({...p,...cached});n++;}while(!result.done);assert.ok(n>10);await svc.cancel({...p,...cached});
+ const oldPath=process.env.PATH;process.env.PATH=root;
+ try{const cached=svc.begin(p);let n=0;do{result=await svc.step({...p,...cached});n++;}while(!result.done);assert.ok(n>10);await svc.cancel({...p,...cached});assert.deepEqual(await svc.install(p),result.result);}finally{process.env.PATH=oldPath;}
+}));
+test('extractor startup failure retains the Python diagnostic and cleans owned staging',()=>fixture(async({root,svc,p})=>{
+ const op=svc.begin(p);let result;
+ do{result=await svc.step({...p,...op});}while(result.phase!=='extract');
+ const oldPath=process.env.PATH;process.env.PATH=root;
+ try{await assert.rejects(svc.step({...p,...op}),{code:'PYTHON_UNAVAILABLE'});}finally{process.env.PATH=oldPath;await svc.cancel({...p,...op});}
+ assert.deepEqual((await fs.readdir(path.join(root,'online'))).filter(x=>/staging-|archive-copy-/.test(x)),[]);
 }));
 test('cancelling any stage preserves the installed bank and removes only operation-owned files',()=>fixture(async({root,svc,p,q})=>{
  for(const phase of ['copy','extract','verify']){

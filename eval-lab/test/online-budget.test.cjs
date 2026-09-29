@@ -4,6 +4,20 @@ const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:pa
 const {validate,service}=require('../node/online.cjs');
 const {within}=require('../node/engine.cjs');
 const GiB=2**30,url='https://github.com/makecindy/eval-bank/releases/download/test/index.json';
+test('missing Python rejects planning and both installers before artifact work',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-python-install-')),id='c'.repeat(64),old=process.env.PATH;
+ try{
+  const dir=path.join(root,'online/indices',id);await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'index.json'),JSON.stringify({url,index:fixture()}));
+  let downloads=0;
+  const {files,runCommand}=require('../node/engine.cjs'),svc=service({base:async()=>root,within,files,runCommand,platform:'darwin',arch:'arm64',fetchFile:async()=>{downloads++;throw Error('must not download');}}),p={root,indexId:id,question:'fixture@v1'};
+  process.env.PATH=root;
+  const missing=e=>e.code==='PYTHON_UNAVAILABLE'&&/Python 3.*PATH/.test(e.message);
+  await assert.rejects(svc.plan(p),missing);
+  await assert.rejects(svc.install(p),missing);
+  await assert.rejects(svc.step({...p,...svc.begin(p)}),missing);
+  assert.equal(downloads,0);assert.deepEqual(await fs.readdir(path.join(root,'online')),['indices']);
+ }finally{process.env.PATH=old;await fs.rm(root,{recursive:true,force:true});}
+});
 function fixture(bytes=8*GiB,expandedBytes=32*GiB){
  const sha='a'.repeat(64),name=sha+'.zip';
  return {format:'eval-lab-online-v1',platform:'darwin-arm64',artifacts:{[name]:{url:url.replace('index.json',name),sha256:sha,bytes,expandedBytes}},questions:[{key:'fixture@v1',path:'question',files:{},layers:[{artifact:name,mount:''}]}]};
