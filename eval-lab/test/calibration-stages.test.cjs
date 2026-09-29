@@ -204,3 +204,9 @@ test('freeze storage failures hide paths and retain the calibrated draft',()=>fi
  }finally{fs.cp=copy;fs.rm=remove;}
  assert.deepEqual(await fs.readFile(report),before);assert.equal((await dispatch('freeze',{root,checkId:cal.checkId})).status,'frozen');
 }));
+test('confirmed repeated freeze remains successful when redundant staging cleanup fails',()=>fixture(async(root)=>{
+ const cal=await dispatch('calibrate',{root,id:'sample',revision:'v1'}),p={root,checkId:cal.checkId},first=await dispatch('freeze',p),remove=fs.rm;
+ const manifest=path.join(root,'eval-lab-data/custom-bank/distribution.json'),before=await fs.readFile(manifest);
+ fs.rm=async function(file,...args){if(path.basename(file).startsWith('staging-'))throw Object.assign(Error('cleanup unavailable'),{code:'EACCES'});return remove.call(this,file,...args);};
+ try{assert.deepEqual(await dispatch('freeze',p),first);await fs.writeFile(path.join(root,'eval-lab-data/freeze.lock'),'legacy');assert.deepEqual(await dispatch('freeze',p),first);assert.deepEqual(await fs.readFile(manifest),before);}finally{fs.rm=remove;}
+}));

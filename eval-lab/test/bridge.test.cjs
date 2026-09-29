@@ -926,3 +926,9 @@ test('ended author identities remain read-only through the check-only freeze ent
  b.cindy.node.request=async x=>x.method==='drafts'?{ok:true,result:[{id:'old',revision:'v1',checkId:'old-check',passed:true}]}:request(x);
  await b.ui('freeze','freeze',{checkId:'old-check'});assert.equal(b.replies.find(x=>x.id==='freeze').ok,false);assert.equal(b.calls.some(x=>x.method==='freeze'),false);
 });
+test('question listing retains both installed offline and default update entries',async()=>{
+ const b=bridge();await b.tool({type:'tool-call',tool:'list_questions',callId:'list',args:{}});
+ const result=b.calls.find(x=>x.type==='tool-result'&&x.callId==='list');assert.equal(result.ok,true);
+ const keys=result.result.questions.map(x=>x.key);assert.ok(keys.includes('audio@v2'));assert.ok(keys.includes('online:fixture:audio@v2'));
+ for(const question of ['audio@v2','online:fixture:audio@v2']){const start=b.calls.length;await b.tool({type:'tool-call',tool:'prepare_run',callId:question,args:{question,...configuration}});assert.equal(b.calls.slice(start).some(x=>x.method==='online_inspect'),question==='audio@v2');}
+});

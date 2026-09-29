@@ -158,7 +158,7 @@ async function freezeUnlocked(p){
  const home=await base(p.root),cal=await read(await within(home,'calibrations/'+id(p.checkId)+'/calibration.json'));if(!cal.ok)throw Error('Calibration did not pass');const dir=await authorHandoff.directory({...p,id:cal.id,revision:cal.revision});if(JSON.stringify(cal.hashes)!==JSON.stringify(await files(dir)))throw Error('Draft changed; recalibrate');
  const bank=path.join(home,'custom-bank');await fs.mkdir(bank,{recursive:true});
  const key=cal.id+'@'+cal.revision;
- const staging=await fs.mkdtemp(path.join(bank,'staging-'));let published=false;
+ const staging=await fs.mkdtemp(path.join(bank,'staging-'));let published=false,confirmed=false;
  try{
   for(const f of ['candidate','reference','author'])await fs.cp(path.join(dir,f),path.join(staging,f),{recursive:true,errorOnExist:true,force:false});await fs.copyFile(path.join(dir,'question.json'),path.join(staging,'question.json'));
   const spec=await read(path.join(staging,'question.json')),hashes=await files(staging),hash=sha(JSON.stringify(hashes));
@@ -167,12 +167,12 @@ async function freezeUnlocked(p){
   const entry={key,title:spec.title,revision:spec.revision,environment:spec.environment,path:rel,sourceManifestSha256:hash,files:hashes};
   // Old builds did not record lock ownership. Never guess whether that writer lives.
   let legacyLock=false;try{await fs.lstat(path.join(home,'freeze.lock'));legacyLock=true;}catch(e){if(e.code!=='ENOENT')throw e;}
-  if(legacyLock){let old;try{old=await read(path.join(bank,'distribution.json'));}catch(e){if(e.code!=='ENOENT')throw e;}if(JSON.stringify(old?.questions?.find(q=>q.key===key))===JSON.stringify(entry))return {key:'custom:'+key,status:'frozen'};throw Error('旧冻结操作状态未知，请先核对原执行；已有题目与材料保留。');}
+  if(legacyLock){let old;try{old=await read(path.join(bank,'distribution.json'));}catch(e){if(e.code!=='ENOENT')throw e;}if(JSON.stringify(old?.questions?.find(q=>q.key===key))===JSON.stringify(entry)){confirmed=true;return {key:'custom:'+key,status:'frozen'};}throw Error('旧冻结操作状态未知，请先核对原执行；已有题目与材料保留。');}
   const request=path.join(bank,'freeze-'+crypto.randomUUID()+'.json');
   try{await write(request,entry);const execution=await runCommand('python3',['-I',path.join(__dirname,'freeze-publish.py'),bank,request],{timeout:30000});if(execution.code!==0||execution.timedOut)throw Error('题库发布尚未确认，请重试核对；已有题目与材料保留。');}finally{await fs.unlink(request).catch(()=>{});}
-  return {key:'custom:'+key,status:'frozen'};
+  confirmed=true;return {key:'custom:'+key,status:'frozen'};
  }catch(error){if(error.code)throw inputError(error,false,'冻结材料');throw error;}
- finally{if(!published)try{await fs.rm(staging,{recursive:true,force:true});}catch(error){throw inputError(error,true,'冻结材料');}}
+ finally{if(!published)try{await fs.rm(staging,{recursive:true,force:true});}catch(error){if(!confirmed)throw inputError(error,true,'冻结材料');}}
 }
 async function freeze(p){return freezeUnlocked(p);}
 async function catalog(p){

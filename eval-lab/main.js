@@ -382,7 +382,7 @@ async function questionCatalog(){
   const sourceKeys=bank.questions.filter(q=>q.questionId===(version?.questionId||d.key.split('@')[0])&&(q.key===installed?.key||q.sourceIndexUrl===(c.indexUrl||DEFAULT_INDEX))).map(q=>q.sourceKey).filter(Boolean);
   return {...d,...(version||{}),sourceKeys:[...new Set(sourceKeys)],key:d.key,installedKey:installed?.key,unresolved:!version,cached:!!version};
  });
- return {...bank,catalogError,availableQuestions:[...defaults.filter(q=>!q.installedKey),...bank.questions],questions:[...defaults,...bank.questions],defaults};
+ return {...bank,catalogError,availableQuestions:[...defaults,...bank.questions],questions:[...defaults,...bank.questions],defaults};
 }
 async function createAuthor(a){
  let task;
