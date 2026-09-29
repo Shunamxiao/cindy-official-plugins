@@ -7,3 +7,14 @@ test('registered scope includes public restrictions and explicit environment pro
  await fs.writeFile(path.join(root,'TASK.md'),'x'.repeat(8001));await assert.rejects(taskScope(root,'Fix project'),/不会截断/);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+test('scope reads bounded bytes from oversized public files and preserves UTF-8 text',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-scope-limit-')),readFile=fs.readFile;
+ try{
+ for(const name of ['TASK.md','ENVIRONMENT.md']){
+  const file=path.join(root,name),handle=await fs.open(file,'w');await handle.truncate(64*1024*1024);await handle.close();
+  fs.readFile=async function(target,...args){if(String(target)===file)throw Error('unbounded scope read');return readFile.call(this,target,...args);};
+  await assert.rejects(taskScope(root,'Fix project'),/不会截断/);fs.readFile=readFile;await fs.unlink(file);
+ }
+ const text='汉😀'.repeat(1000);await fs.writeFile(path.join(root,'TASK.md'),text);assert.ok((await taskScope(root,'Fix project')).includes(text));
+ }finally{fs.readFile=readFile;await fs.rm(root,{recursive:true,force:true});}
+});
