@@ -142,7 +142,13 @@ test('manifest 声明 Cindy 持久凭证及其最小 Node 注入范围', () => {
   // Shape, not a pinned value: this test is about the secret bindings, and a
   // hardcoded version goes stale on every release bump.
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-  assert.deepEqual(manifest.slots, ['tool', 'node']);
+  // v3 清单不再有 slots：能力改由顶层字段直接表达，这里守住迁移后的等价形态。
+  assert.equal(manifest.schemaVersion, 3);
+  // 0.1.64 是首个支持 Manifest v3 的稳定版（见 ios-simulator/README.zh-CN.md）；
+  // 本插件只依赖 v3 的 tools / node / settingsHtml，没有更晚的 Host 能力要求。
+  assert.equal(manifest.minCindyVersion, '0.1.64');
+  assert.equal(Object.hasOwn(manifest, 'slots'), false);
+  assert.equal(manifest.node.entry, 'node/worker.cjs');
   assert.equal(manifest.settingsHtml, 'settings.html');
   assert.equal(
     Object.hasOwn(manifest, 'settingsHeight'),
@@ -482,4 +488,134 @@ test('Worker 将认证、网络与频控错误转换成可行动文案', () => {
   assert.match(worker.humanizeError(Object.assign(new Error('connect timed out'), { code: 'ETIMEDOUT' })), /网络/);
   assert.match(worker.humanizeError(new Error('Too many simultaneous connections')), /稍后/);
   assert.match(worker.humanizeError(new Error('MESSAGE_MOVE_UNCONFIRMED')), /重新搜索/);
+  assert.match(worker.humanizeError(new Error('INVALID_BODY')), /body_text 或 body_html/);
+});
+
+function createSendHarness() {
+  const sent = [];
+  return {
+    sent,
+    deps: {
+      createImap() {
+        throw new Error('unexpected IMAP');
+      },
+      createSmtp() {
+        return {
+          async sendMail(options) {
+            sent.push(options);
+            return { messageId: '<probe@example.test>', accepted: ['b@example.test'], rejected: [] };
+          },
+          close() {},
+        };
+      },
+      createComposer() {
+        throw new Error('unexpected composer');
+      },
+      parseMessage() {
+        throw new Error('unexpected parser');
+      },
+    },
+  };
+}
+
+const sendCredentials = { email: 'user@qq.com', authorizationCode: 'abcdefghijklmnop' };
+
+function sendProbe(harness, body) {
+  return worker.performAction(
+    sendCredentials,
+    { action: 'send', to: 'b@example.test', subject: 'Subject', ...body },
+    harness.deps,
+  );
+}
+
+test('Worker 只给 body_text 时保持原有纯文本发送行为', async () => {
+  const harness = createSendHarness();
+  const result = await sendProbe(harness, { body_text: 'plain body' });
+  assert.equal(result.sent, true);
+  assert.equal(harness.sent.length, 1);
+  assert.equal(harness.sent[0].text, 'plain body');
+  assert.equal(Object.hasOwn(harness.sent[0], 'html'), false);
+});
+
+test('Worker 用 body_html 发送真实 multipart/alternative 并补纯文本备选', async () => {
+  const harness = createSendHarness();
+  await sendProbe(harness, { body_html: '<h1>Hello</h1><p>World</p>' });
+  assert.equal(harness.sent[0].html, '<h1>Hello</h1><p>World</p>');
+  assert.equal(harness.sent[0].text, 'Hello World');
+
+  // 用插件自身的运行时依赖验证真实 MIME：只给 HTML 时也必须同时带纯文本部分。
+  const runtime = worker.createRuntimeDeps();
+  const composer = runtime.createComposer();
+  const info = await composer.sendMail(harness.sent[0]);
+  if (typeof composer.close === 'function') composer.close();
+  assert.match(info.message.toString('utf8'), /Content-Type: multipart\/alternative/);
+  const parsed = await runtime.parseMessage(info.message);
+  assert.match(String(parsed.html), /<h1>Hello<\/h1>/);
+  assert.equal(String(parsed.text), 'Hello World');
+
+  const both = createSendHarness();
+  await sendProbe(both, { body_text: 'plain body', body_html: '<h1>Hello</h1>' });
+  assert.equal(both.sent[0].text, 'plain body');
+  assert.equal(both.sent[0].html, '<h1>Hello</h1>');
+
+  // 草稿与发送共用 mailOptions，这里确认 HTML 草稿同样落成 multipart/alternative。
+  const appended = [];
+  const draft = createWorkerHarness({
+    async list() {
+      return [{ path: 'Drafts', name: 'Drafts', delimiter: '/', specialUse: '\\Drafts', flags: new Set() }];
+    },
+    async append(path, message) {
+      appended.push({ path, message });
+      return { uid: 7, uidValidity: 1 };
+    },
+  });
+  draft.deps.createComposer = () => worker.createRuntimeDeps().createComposer();
+  const draftResult = await worker.performAction(
+    sendCredentials,
+    { action: 'draft', to: 'b@example.test', subject: 'Subject', body_html: '<p>草稿</p>' },
+    draft.deps,
+  );
+  assert.equal(draftResult.folder, 'Drafts');
+  assert.match(appended[0].message.toString('utf8'), /Content-Type: multipart\/alternative/);
+});
+
+test('Worker 拒绝缺少正文、非字符串正文与超长正文', async () => {
+  const harness = createSendHarness();
+  await assert.rejects(sendProbe(harness, {}), /INVALID_BODY/);
+  await assert.rejects(sendProbe(harness, { body_text: 123 }), /INVALID_BODY/);
+  await assert.rejects(sendProbe(harness, { body_html: null }), /INVALID_BODY/);
+  await assert.rejects(sendProbe(harness, { body_html: '<p>a\u0000b</p>' }), /INVALID_BODY/);
+  await assert.rejects(sendProbe(harness, { body_html: 'x'.repeat(500001) }), /MESSAGE_TOO_LARGE/);
+  await assert.rejects(sendProbe(harness, { body_text: 'x'.repeat(500001) }), /MESSAGE_TOO_LARGE/);
+  assert.equal(harness.sent.length, 0);
+});
+
+test('main.js 让 send/draft 接受 body_html，并在缺少正文时给出可行动文案', async () => {
+  const harness = createMainHarness(async () => ({ ok: true, result: { sent: true } }));
+
+  const htmlResult = await harness.call('qq_mail', {
+    action: 'send',
+    to: 'b@example.test',
+    subject: 'HTML',
+    body_html: '<h1>hi</h1>',
+  });
+  assert.equal(htmlResult.ok, true);
+  const forwarded = harness.nodeRequests[0].params.action;
+  assert.equal(forwarded.body_html, '<h1>hi</h1>');
+  assert.equal(Object.hasOwn(forwarded, 'body_text'), false);
+
+  const textResult = await harness.call('qq_mail', {
+    action: 'draft',
+    to: 'b@example.test',
+    subject: 'plain',
+    body_text: 'plain',
+  });
+  assert.equal(textResult.ok, true);
+  assert.equal(harness.nodeRequests[1].params.action.body_text, 'plain');
+  assert.equal(Object.hasOwn(harness.nodeRequests[1].params.action, 'body_html'), false);
+
+  const missing = await harness.call('qq_mail', { action: 'send', to: 'b@example.test', subject: 'x' });
+  assert.equal(missing.ok, false);
+  assert.match(missing.message, /body_text 或 body_html/);
+  assert.equal(harness.nodeRequests.length, 2);
 });

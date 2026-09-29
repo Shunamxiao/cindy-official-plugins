@@ -171,14 +171,19 @@ function sanitizeMailArgs(args) {
   }
 
   if (action === 'send' || action === 'draft') {
-    if (args.to === undefined || typeof args.subject !== 'string' || typeof args.body_text !== 'string') {
-      throw new Error(action + ' 需要 to、subject 和 body_text');
+    // 正文可以只给纯文本、只给 HTML，或两者都给（由 Worker 组装成
+    // multipart/alternative）；两个都不是字符串时才算参数无效。
+    var hasText = typeof args.body_text === 'string';
+    var hasHtml = typeof args.body_html === 'string';
+    if (args.to === undefined || typeof args.subject !== 'string' || (!hasText && !hasHtml)) {
+      throw new Error(action + ' 需要 to、subject 和正文：body_text 或 body_html 至少提供一个');
     }
     output.to = args.to;
     if (args.cc !== undefined) output.cc = args.cc;
     if (args.bcc !== undefined) output.bcc = args.bcc;
     output.subject = args.subject;
-    output.body_text = args.body_text;
+    if (hasText) output.body_text = args.body_text;
+    if (hasHtml) output.body_html = args.body_html;
   }
 
   return output;

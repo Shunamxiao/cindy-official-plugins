@@ -14,6 +14,7 @@ const QQ = Object.freeze({
 
 const MAX_BODY_CHARS = 20000;
 const MAX_SOURCE_BYTES = 12 * 1024 * 1024;
+const MAX_SEND_BODY_CHARS = 500000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SECRET_KEY = 'qq_mail_authorization_code';
 
@@ -262,6 +263,16 @@ async function search(credentials, action, deps) {
   }));
 }
 
+/**
+ * 把 HTML 正文降级成纯文本：读取邮件和补纯文本备选共用同一套剥离规则，
+ * 不额外引入依赖，也不解析 HTML 实体（与读取路径保持一致的已知取舍）。
+ */
+function htmlToPlainText(html) {
+  return typeof html === 'string'
+    ? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    : '';
+}
+
 async function readMessage(credentials, action, deps) {
   const folder = action.folder || 'INBOX';
   return withImap(credentials, deps, (client) => withMailbox(client, folder, async () => {
@@ -303,9 +314,7 @@ async function readMessage(credentials, action, deps) {
     const parsed = await deps.parseMessage(Buffer.concat(chunks, sourceBytes));
     const text = typeof parsed.text === 'string' && parsed.text.trim()
       ? parsed.text
-      : typeof parsed.html === 'string'
-        ? parsed.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-        : '';
+      : htmlToPlainText(parsed.html);
     return {
       ...summaryFromMessage(message, folder),
       cc: parsed.cc && parsed.cc.text ? parsed.cc.text : '',
@@ -325,6 +334,15 @@ async function readMessage(credentials, action, deps) {
   }));
 }
 
+/**
+ * 组装 nodemailer 邮件选项。
+ *
+ * body_text 与 body_html 至少提供一个。两者都按纯数据原样传递，插件不做模板替换：
+ * - 只给 body_text：保持原有纯文本行为，逐字不变。
+ * - 只给 body_html：自动补一份剥离标签的纯文本备选，收件端不支持 HTML 时仍可读。
+ * - 两者都给：发送 multipart/alternative，纯文本在前、HTML 在后。
+ * disableFileAccess / disableUrlAccess 恒为 true，插件不会为正文抓取任何外部资源。
+ */
 function mailOptions(credentials, action) {
   const to = normalizeRecipients(action.to, true);
   const cc = normalizeRecipients(action.cc, false);
@@ -332,17 +350,32 @@ function mailOptions(credentials, action) {
   if (typeof action.subject !== 'string' || /[\r\n\0]/.test(action.subject)) {
     throw new Error('INVALID_SUBJECT');
   }
-  if (typeof action.body_text !== 'string') throw new Error('INVALID_BODY');
-  if (action.subject.length > 998 || action.body_text.length > 500000) {
+  const hasText = action.body_text !== undefined;
+  const hasHtml = action.body_html !== undefined;
+  // body_text 只校验类型，与既有行为一致；body_html 是新增入口，额外拒绝 NUL。
+  if (hasText && typeof action.body_text !== 'string') throw new Error('INVALID_BODY');
+  if (hasHtml && (typeof action.body_html !== 'string' || action.body_html.includes('\u0000'))) {
+    throw new Error('INVALID_BODY');
+  }
+  if (!hasText && !hasHtml) throw new Error('INVALID_BODY');
+  if (
+    action.subject.length > 998
+    || (hasText && action.body_text.length > MAX_SEND_BODY_CHARS)
+    || (hasHtml && action.body_html.length > MAX_SEND_BODY_CHARS)
+  ) {
     throw new Error('MESSAGE_TOO_LARGE');
   }
+  // 只给 HTML 时补纯文本备选；备选为空（例如正文只有图片）时不发空的纯文本部分。
+  const plainText = hasText ? action.body_text : htmlToPlainText(action.body_html);
+  const includeText = hasText || plainText.length > 0;
   return {
     from: credentials.email,
     to,
     ...(cc.length ? { cc } : {}),
     ...(bcc.length ? { bcc } : {}),
     subject: action.subject,
-    text: action.body_text,
+    ...(includeText ? { text: plainText } : {}),
+    ...(hasHtml ? { html: action.body_html } : {}),
     disableFileAccess: true,
     disableUrlAccess: true,
   };
@@ -537,7 +570,9 @@ function humanizeError(error) {
   if (message === 'RECIPIENT_REQUIRED') return '请至少填写一个收件人';
   if (message === 'INVALID_RECIPIENT') return '收件人、抄送或密送地址格式不正确';
   if (message === 'INVALID_SUBJECT') return '邮件主题格式不正确';
-  if (message === 'INVALID_BODY') return '邮件正文格式不正确';
+  if (message === 'INVALID_BODY') {
+    return '邮件正文格式不正确，请在 body_text 或 body_html 中至少提供一个字符串';
+  }
   if (message.startsWith('INVALID_SINCE') || message.startsWith('INVALID_BEFORE')) {
     return '搜索日期格式无效，请使用 ISO 日期或日期时间';
   }
