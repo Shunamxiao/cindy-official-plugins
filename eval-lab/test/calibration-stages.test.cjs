@@ -191,3 +191,16 @@ test('explicitly selected failed report can retry alongside completed legacy fai
  const retry={...p,retryFrom:'legacy-failed'},result=await dispatch('calibrate',retry);assert.equal(result.ok,true);
  assert.deepEqual(await dispatch('calibrate',retry),result);assert.deepEqual(await fs.readFile(path.join(source,'calibration.json')),old);
 }));
+test('freeze storage failures hide paths and retain the calibrated draft',()=>fixture(async(root)=>{
+ const p={root,id:'sample',revision:'v1'},cal=await dispatch('calibrate',p),copy=fs.cp,remove=fs.rm;
+ const report=path.join(root,'eval-lab-data/calibrations',cal.checkId,'calibration.json'),before=await fs.readFile(report);
+ try{
+ for(const code of ['ENOSPC','EDQUOT','EACCES','EPERM','EROFS','EIO','ENOENT','UNKNOWN']){
+  fs.cp=async()=>{throw Object.assign(Error('copy '+root+'/private'),{code});};
+  await assert.rejects(dispatch('freeze',{root,checkId:cal.checkId}),e=>e.code===code&&!e.message.includes(root)&&/冻结材料复制失败/.test(e.message));
+ }
+ fs.rm=async function(file,...args){if(path.basename(file).startsWith('staging-'))throw Object.assign(Error('cleanup '+file),{code:'EACCES'});return remove.call(this,file,...args);};
+ await assert.rejects(dispatch('freeze',{root,checkId:cal.checkId}),e=>e.code==='EACCES'&&!e.message.includes(root)&&/冻结材料清理未完成/.test(e.message));
+ }finally{fs.cp=copy;fs.rm=remove;}
+ assert.deepEqual(await fs.readFile(report),before);assert.equal((await dispatch('freeze',{root,checkId:cal.checkId})).status,'frozen');
+}));

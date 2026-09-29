@@ -171,7 +171,8 @@ async function freezeUnlocked(p){
   const request=path.join(bank,'freeze-'+crypto.randomUUID()+'.json');
   try{await write(request,entry);const execution=await runCommand('python3',['-I',path.join(__dirname,'freeze-publish.py'),bank,request],{timeout:30000});if(execution.code!==0||execution.timedOut)throw Error('题库发布尚未确认，请重试核对；已有题目与材料保留。');}finally{await fs.unlink(request).catch(()=>{});}
   return {key:'custom:'+key,status:'frozen'};
- }finally{if(!published)await fs.rm(staging,{recursive:true,force:true});}
+ }catch(error){if(error.code)throw inputError(error,false,'冻结材料');throw error;}
+ finally{if(!published)try{await fs.rm(staging,{recursive:true,force:true});}catch(error){throw inputError(error,true,'冻结材料');}}
 }
 async function freeze(p){return freezeUnlocked(p);}
 async function catalog(p){
