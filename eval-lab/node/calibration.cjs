@@ -28,8 +28,9 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   await fs.mkdir(path.dirname(checks),{recursive:true});
   // Find this question’s current snapshots and explicit retries.
   const matches=[];
-  for(const entry of await fs.readdir(path.dirname(checks))){
-   if(!/^(snapshot|retry)-[a-f0-9]{64}$/.test(entry))continue;
+  for(const item of await fs.readdir(path.dirname(checks),{withFileTypes:true})){
+   if(!item.isDirectory()||!/^(snapshot|retry)-[a-f0-9]{64}$/.test(item.name))continue;
+   const entry=item.name;
    const folder=await within(home,'calibrations/'+id(entry));let old;
    try{old=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
    if(old.id===p.id&&old.revision===p.revision){
@@ -140,9 +141,10 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
  async function all(p){const {checkId}=await begin(p);for(let stepIndex=0;stepIndex<names.length;stepIndex++)await step({...p,checkId,step:stepIndex});return finish({...p,checkId});}
  async function idle(p){
   const parent=path.join(await base(p.root),'calibrations');let entries;
-  try{entries=await fs.readdir(parent);}catch(e){if(e.code==='ENOENT')return {ok:true};throw e;}
-  for(const entry of entries){
-   if(!/^(snapshot|retry)-[a-f0-9]{64}$/.test(entry))continue;
+  try{entries=await fs.readdir(parent,{withFileTypes:true});}catch(e){if(e.code==='ENOENT')return {ok:true};throw e;}
+  for(const item of entries){
+   if(!item.isDirectory()||!/^(snapshot|retry)-[a-f0-9]{64}$/.test(item.name))continue;
+   const entry=item.name;
    const folder=await within(await base(p.root),'calibrations/'+id(entry));let plan;
    try{plan=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
    if(plan.id!==p.id||plan.revision!==p.revision)continue;

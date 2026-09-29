@@ -227,3 +227,15 @@ test('freeze rejects edits made while copying the calibrated draft',()=>fixture(
  try{await assert.rejects(dispatch('freeze',{root,checkId:cal.checkId}),/Draft changed/);}finally{fs.cp=copy;}
  await assert.rejects(fs.access(path.join(root,'eval-lab-data/custom-bank/distribution.json')));
 }));
+
+test('calibration discovery ignores Finder metadata and non-snapshot entries',()=>fixture(async(root)=>{
+ const p={root,id:'sample',revision:'v1'},cal=await dispatch('calibrate',p),parent=path.join(root,'eval-lab-data/calibrations');
+ for(const name of ['.DS_Store','notes','snapshot-'+'f'.repeat(64)])await fs.writeFile(path.join(parent,name),'unrelated');
+ await fs.mkdir(path.join(parent,'personal-notes'));
+ const rows=await dispatch('drafts',{root});assert.equal(rows.length,1);assert.equal(rows[0].checkId,cal.checkId);
+ assert.deepEqual(await dispatch('calibrate_idle',p),{ok:true});
+ assert.equal((await dispatch('calibrate_begin',p)).checkId,cal.checkId);
+ assert.equal((await dispatch('freeze',{root,checkId:cal.checkId})).status,'frozen');
+ assert.deepEqual(await dispatch('drafts',{root}),[]);
+ assert.equal(await fs.readFile(path.join(parent,'.DS_Store'),'utf8'),'unrelated');
+}));

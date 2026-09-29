@@ -31,11 +31,11 @@ test('history and export exclude another source even for identical question vers
 });
 
 test('draft listing excludes published versions while preserving later drafts and calibration bytes',async()=>{
- const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-published-'));
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-published-')),old='snapshot-'+'a'.repeat(64),next='snapshot-'+'b'.repeat(64);
  try{
-  for(const [checkId,revision]of [['old','v1'],['next','v2']]){const dir=path.join(root,'eval-lab-data/calibrations',checkId);await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'calibration.json'),JSON.stringify({checkId,id:'same',revision,ok:true}));}
-  const cal=path.join(root,'eval-lab-data/calibrations/old/calibration.json'),before=await fs.readFile(cal,'utf8');
+  for(const [checkId,revision]of [[old,'v1'],[next,'v2']]){const dir=path.join(root,'eval-lab-data/calibrations',checkId);await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'calibration.json'),JSON.stringify({checkId,id:'same',revision,ok:true}));}
+  const cal=path.join(root,'eval-lab-data/calibrations',old,'calibration.json'),before=await fs.readFile(cal,'utf8');
   const bank=path.join(root,'eval-lab-data/custom-bank');await fs.mkdir(bank);await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'same@v1'}]}));
-  assert.deepEqual((await dispatch('drafts',{root})).map(d=>d.checkId),['next']);assert.equal(await fs.readFile(cal,'utf8'),before);
+  assert.deepEqual((await dispatch('drafts',{root})).map(d=>d.checkId),[next]);assert.equal(await fs.readFile(cal,'utf8'),before);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
