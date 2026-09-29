@@ -66364,8 +66364,8 @@ var require_worker = __commonJS({
           const code = Number.parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
           return Number.isInteger(code) && code > 0 && code <= 1114111 ? String.fromCodePoint(code) : match;
         }
-        const named = HTML_ENTITIES[body.toLowerCase()];
-        return named === void 0 ? match : named;
+        const name = body.toLowerCase();
+        return Object.hasOwn(HTML_ENTITIES, name) ? HTML_ENTITIES[name] : match;
       });
     }
     function htmlToPlainText(html) {

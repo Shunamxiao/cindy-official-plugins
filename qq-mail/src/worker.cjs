@@ -282,8 +282,10 @@ function decodeHtmlEntities(text) {
         ? String.fromCodePoint(code)
         : match;
     }
-    const named = HTML_ENTITIES[body.toLowerCase()];
-    return named === undefined ? match : named;
+    // 用 Object.hasOwn 查表：否则 &constructor; 这类未收录的实体会命中原型链上
+    // 的函数并被写进正文。
+    const name = body.toLowerCase();
+    return Object.hasOwn(HTML_ENTITIES, name) ? HTML_ENTITIES[name] : match;
   });
 }
 

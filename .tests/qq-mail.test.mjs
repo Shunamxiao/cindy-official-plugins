@@ -676,3 +676,8 @@ test('main.js 拒绝已提供但类型错误的正文，不静默丢弃', async 
   assert.equal(Object.hasOwn(harness.nodeRequests[0].params.action, 'body_text'), false);
   assert.equal(harness.nodeRequests.length, 1);
 });
+test('未知与原型链上的实体名不被误解码', async () => {
+  const harness = createSendHarness();
+  await sendProbe(harness, { body_html: '<p>Tom &amp; Jerry &constructor; &toString; &valueOf; &notreal;</p>' });
+  assert.equal(harness.sent[0].text, 'Tom & Jerry &constructor; &toString; &valueOf; &notreal;');
+});
