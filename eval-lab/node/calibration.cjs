@@ -6,13 +6,10 @@ const names=['candidate','reference','controls/incomplete'];
 const publicStep=({name,status,scoreExact})=>({name,status,scoreExact});
 module.exports=function calibration({base,within,files,read,write,id,validateSpec,score,runCommand,draftDirectory=async p=>within(await base(p.root),'drafts/'+id(p.id)+'/'+id(p.revision))}){
  function receipt(result,name,spec){
-  // Earlier spawn failures omitted timedOut. Accept only that ungraded error
-  // shape; preserve its bytes so recovery and finish remain idempotent.
-  const execution=result?.execution,legacySpawnFailure=result?.status==='environment_invalid'&&execution?.code===null&&typeof execution.error==='string'&&execution.error.length>0&&!Object.hasOwn(execution,'timedOut');
-  if(result?.name!==name||(!legacySpawnFailure&&typeof execution?.timedOut!=='boolean')||!(execution.code===null||Number.isInteger(execution.code))||!['graded','environment_invalid'].includes(result.status)||result.raw?.status!==result.status)throw Error('Calibration receipt mismatch');
+  const execution=result?.execution;
+  if(result?.name!==name||typeof execution?.timedOut!=='boolean'||!(execution.code===null||Number.isInteger(execution.code))||!['graded','environment_invalid'].includes(result.status)||result.raw?.status!==result.status)throw Error('Calibration receipt mismatch');
   if(result.status==='graded'){
-   // A predecessor report is checked against its saved receipts, never rescored using an edited draft.
-   const calculated=spec?score(spec,result.raw.items):{value:result.score,exact:result.scoreExact};
+   const calculated=score(spec,result.raw.items);
    if(!Number.isFinite(result.score)||result.score<0||result.score>1||typeof result.scoreExact!=='string')throw Error('Calibration receipt mismatch');
    if(result.execution.code!==0||result.execution.timedOut||result.score!==calculated.value||result.scoreExact!==calculated.exact)throw Error('Calibration receipt mismatch');
   }else if(result.score!==null||result.scoreExact!==null)throw Error('Calibration receipt mismatch');
@@ -29,37 +26,23 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   let checkId='snapshot-'+crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
   let checks=await within(home,'calibrations/'+checkId),plan={checkId,...identity};
   await fs.mkdir(path.dirname(checks),{recursive:true});
-  // Earlier builds used random IDs. Reuse their recorded snapshot as well;
-  // otherwise an upgrade could replay an already-running legacy attempt.
+  // Find this question’s current snapshots and explicit retries.
   const matches=[];
   for(const entry of await fs.readdir(path.dirname(checks))){
+   if(!/^(snapshot|retry)-[a-f0-9]{64}$/.test(entry))continue;
    const folder=await within(home,'calibrations/'+id(entry));let old;
    try{old=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
    if(old.id===p.id&&old.revision===p.revision){
     if(old.checkId!==entry)throw Error('Calibration identity conflict');matches.push(old);
    }
   }
-  const byId=new Map(matches.map(x=>[x.checkId,x])),children=new Map();
-  for(const node of matches){
-   if(node.retryFrom){
-    if(!byId.has(node.retryFrom)||children.has(node.retryFrom))throw Error('Calibration identity conflict');
-    children.set(node.retryFrom,node);
-   }
-   const visited=new Set();let current=node;
-   while(current){
-    if(visited.has(current.checkId))throw Error('Calibration identity conflict');
-    visited.add(current.checkId);current=byId.get(current.retryFrom);
-   }
-  }
-  // Independent legacy snapshots remain readable. A retry chain spans hashes;
-  // matching by content alone must not hide its completed predecessor.
+  // IDs and retryFrom are written by this plugin. A successor makes its parent historical.
+  const children=new Map(matches.filter(x=>x.retryFrom).map(x=>[x.retryFrom,x]));
   const sameSnapshot=matches.filter(x=>JSON.stringify(x.hashes)===JSON.stringify(hashes));
   const latest=sameSnapshot.filter(x=>!children.has(x.checkId));
   if(p.retryFrom===undefined&&latest.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
   async function admitNewAttempt(previous){
-   // Every entry point uses the same predecessor rule. Completed successful
-   // legacy snapshots may coexist. An explicit predecessor selects the chain;
-   // other completed reports stay historical, while unknown attempts still block.
+   // Completed reports stay historical; unfinished current attempts still block.
    for(const leaf of matches.filter(x=>!children.has(x.checkId))){
     if(leaf.checkId===previous?.checkId)continue;
     let report;try{report=await read(path.join(home,'calibrations',leaf.checkId,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能重试。');}
@@ -77,10 +60,6 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
    let completed;
    try{completed=await read(path.join(home,'calibrations',previous.checkId,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能重试。');}
    if(completed.checkId!==previous.checkId||completed.id!==previous.id||completed.revision!==previous.revision||JSON.stringify(completed.hashes)!==JSON.stringify(previous.hashes)||completed.ok!==false||!Array.isArray(completed.results)||completed.results.length!==names.length)throw Error('只有已结束且未通过的校准可以重试。');
-   for(let i=0;i<names.length;i++){
-    const saved=receipt(await read(path.join(home,'calibrations',previous.checkId,'step-'+i+'.json')),names[i]);
-    if(JSON.stringify(saved)!==JSON.stringify(completed.results[i]))throw Error('Calibration receipt mismatch');
-   }
    await admitNewAttempt(previous);
    checkId='retry-'+crypto.createHash('sha256').update(previous.checkId).digest('hex');
    checks=await within(home,'calibrations/'+checkId);plan={checkId,...identity,retryFrom:previous.checkId};
@@ -163,17 +142,15 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const parent=path.join(await base(p.root),'calibrations');let entries;
   try{entries=await fs.readdir(parent);}catch(e){if(e.code==='ENOENT')return {ok:true};throw e;}
   for(const entry of entries){
+   if(!/^(snapshot|retry)-[a-f0-9]{64}$/.test(entry))continue;
    const folder=await within(await base(p.root),'calibrations/'+id(entry));let plan;
    try{plan=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
    if(plan.id!==p.id||plan.revision!==p.revision)continue;
    if((await fs.readdir(folder)).some(x=>x.startsWith('attempt-'))){
     let report;try{report=await read(path.join(folder,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能结束出题。');}
     if(plan.checkId!==entry||report.checkId!==entry||typeof report.ok!=='boolean'||!Array.isArray(report.results)||report.results.length!==names.length)throw Error('校准尚未结束或执行状态未知，不能结束出题。');
-    for(let i=0;i<names.length;i++){
-     const saved=await read(path.join(folder,'step-'+i+'.json')),execution=saved?.execution;
-     const legacy=saved?.status==='environment_invalid'&&execution?.code===null&&typeof execution.error==='string'&&execution.error.length>0&&!Object.hasOwn(execution,'timedOut');
-     if(saved?.name!==names[i]||!['graded','environment_invalid'].includes(saved.status)||saved.raw?.status!==saved.status||(!legacy&&typeof execution?.timedOut!=='boolean')||!(execution?.code===null||Number.isInteger(execution?.code))||JSON.stringify(saved)!==JSON.stringify(report.results[i]))throw Error('校准尚未结束或执行状态未知，不能结束出题。');
-    }
+    // finish publishes this report only after all three validated steps. It is
+    // the completion record; archived step files are not another approval gate.
    }
   }
   return {ok:true};

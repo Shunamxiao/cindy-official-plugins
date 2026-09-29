@@ -43,8 +43,6 @@ test('spawn failure receipts remain readable and finish without re-executing',()
  const folder=path.join(root,'eval-lab-data/calibrations',checkId);
  const file=path.join(folder,'step-0.json'),value=JSON.parse(await fs.readFile(file,'utf8'));
  assert.equal(value.execution.timedOut,false);assert.equal(starts,3);
- // Old versions wrote this exact spawn-error shape, without timedOut.
- value.execution={code:null,error:value.execution.error};await fs.writeFile(file,JSON.stringify(value));
  await fs.rename(file,path.join(folder,'attempt-0/receipt.json'));
  assert.equal((await dispatch('calibrate_step',{...p,step:0})).status,'environment_invalid');
  assert.equal((await dispatch('calibrate_step',{...p,step:1})).status,'environment_invalid');
@@ -99,15 +97,16 @@ test('unknown attempts are not replayed and changed drafts cannot finish',()=>fi
  await assert.rejects(dispatch('calibrate_step',{...p,step:1}),/Draft changed/);
  await assert.rejects(dispatch('calibrate_finish',p),/Draft changed/);
 }));
-test('legacy random check IDs survive a lost response without replaying an unknown attempt',()=>fixture(async(root)=>{
+test('pre-release random IDs remain untouched and do not gate current calibration',()=>fixture(async(root)=>{
  const p={root,id:'sample',revision:'v1'},current=await dispatch('calibrate_begin',p);
  const parent=path.join(root,'eval-lab-data/calibrations'),legacy='legacy-check';
  await fs.rename(path.join(parent,current.checkId),path.join(parent,legacy));
  const file=path.join(parent,legacy,'plan.json'),plan=JSON.parse(await fs.readFile(file,'utf8'));
  plan.checkId=legacy;await fs.writeFile(file,JSON.stringify(plan));await fs.mkdir(path.join(parent,legacy,'attempt-0'));
- assert.equal((await dispatch('calibrate_begin',p)).checkId,legacy);
- await assert.rejects(dispatch('calibrate_step',{root,checkId:legacy,step:0}),{code:'EEXIST'});
- assert.deepEqual(await fs.readdir(parent),[legacy]);
+ assert.equal((await dispatch('calibrate_begin',p)).checkId,current.checkId);
+ assert.equal((await dispatch('calibrate',p)).ok,true);
+ assert.equal(JSON.parse(await fs.readFile(file)).checkId,legacy);
+ assert.ok((await fs.stat(path.join(parent,legacy,'attempt-0'))).isDirectory());
 }));
 test('missing plan recovers preparation only, publishes atomically and preserves unknown attempts',()=>fixture(async(root)=>{
  const p={root,id:'sample',revision:'v1'},first=await dispatch('calibrate_begin',p),folder=path.join(root,'eval-lab-data/calibrations',first.checkId),plan=path.join(folder,'plan.json');
@@ -165,7 +164,7 @@ test('calibration copy and cleanup errors never expose source or destination pat
   await assert.rejects(dispatch('calibrate_step',p),/execution is unknown/);
  });
 });
-test('ending authoring requires complete matching receipts, not merely a finished-looking report',()=>fixture(async(root)=>{
+test('ending authoring uses the published completion report without rechecking archived steps',()=>fixture(async(root)=>{
  const p={root,id:'sample',revision:'v1'};
  assert.deepEqual(await dispatch('calibrate_idle',p),{ok:true});
  const {checkId}=await dispatch('calibrate_begin',p);
@@ -174,12 +173,11 @@ test('ending authoring requires complete matching receipts, not merely a finishe
  for(const step of [1,2])await dispatch('calibrate_step',{root,checkId,step});
  await dispatch('calibrate_finish',{root,checkId});
  assert.deepEqual(await dispatch('calibrate_idle',p),{ok:true});
- const file=path.join(root,'eval-lab-data/calibrations',checkId,'step-1.json');
- const saved=await fs.readFile(file,'utf8');await fs.writeFile(file,saved.replace('"code": 0','"code": 9'));
- await assert.rejects(dispatch('calibrate_idle',p),/不能结束/);
+ await fs.unlink(path.join(root,'eval-lab-data/calibrations',checkId,'step-1.json'));
+ assert.deepEqual(await dispatch('calibrate_idle',p),{ok:true});
 }));
 
-test('explicitly selected failed report can retry alongside completed legacy failures',()=>fixture(async(root,directory)=>{
+test('retry uses the published failed report and ignores pre-release random records',()=>fixture(async(root,directory)=>{
  const p={root,id:'sample',revision:'v1'},grade=path.join(directory,'author/grade.py'),original=await fs.readFile(grade);
  await fs.writeFile(grade,"raise RuntimeError('broken')\n");const failed=await dispatch('calibrate',p);
  const parent=path.join(root,'eval-lab-data/calibrations'),source=path.join(parent,failed.checkId),legacy=path.join(parent,'legacy-failed');
@@ -188,7 +186,8 @@ test('explicitly selected failed report can retry alongside completed legacy fai
  for(const name of ['plan.json','calibration.json']){const f=path.join(legacy,name),v=JSON.parse(await fs.readFile(f));v.checkId='legacy-failed';v.hashes=hashes;await fs.writeFile(f,JSON.stringify(v));}
  const old=await fs.readFile(path.join(source,'calibration.json'));
  await fs.writeFile(grade,original);await assert.rejects(dispatch('calibrate_begin',p),/明确重试/);
- const retry={...p,retryFrom:'legacy-failed'},result=await dispatch('calibrate',retry);assert.equal(result.ok,true);
+ await fs.unlink(path.join(source,'step-1.json'));
+ const retry={...p,retryFrom:failed.checkId},result=await dispatch('calibrate',retry);assert.equal(result.ok,true);
  assert.deepEqual(await dispatch('calibrate',retry),result);assert.deepEqual(await fs.readFile(path.join(source,'calibration.json')),old);
 }));
 test('freeze storage failures hide paths and retain the calibrated draft',()=>fixture(async(root)=>{
@@ -209,4 +208,10 @@ test('confirmed repeated freeze remains successful when redundant staging cleanu
  const manifest=path.join(root,'eval-lab-data/custom-bank/distribution.json'),before=await fs.readFile(manifest);
  fs.rm=async function(file,...args){if(path.basename(file).startsWith('staging-'))throw Object.assign(Error('cleanup unavailable'),{code:'EACCES'});return remove.call(this,file,...args);};
  try{assert.deepEqual(await dispatch('freeze',p),first);await fs.writeFile(path.join(root,'eval-lab-data/freeze.lock'),'legacy');assert.deepEqual(await dispatch('freeze',p),first);assert.deepEqual(await fs.readFile(manifest),before);}finally{fs.rm=remove;}
+}));
+
+test('obsolete freeze marker is preserved but does not block the current manifest writer',()=>fixture(async(root)=>{
+ const cal=await dispatch('calibrate',{root,id:'sample',revision:'v1'}),marker=path.join(root,'eval-lab-data/freeze.lock');
+ await fs.writeFile(marker,'development marker');assert.equal((await dispatch('freeze',{root,checkId:cal.checkId})).status,'frozen');
+ assert.equal(await fs.readFile(marker,'utf8'),'development marker');
 }));

@@ -78,9 +78,9 @@ async function grade(p){
  if(execution){
   // A complete process receipt permits publication, never another execution.
   if(typeof execution.timedOut!=='boolean'||!(execution.code===null||Number.isInteger(execution.code)))throw Error('Grading receipt mismatch');
-  const expected=execution.submissionHashes||await read(path.join(dir,'submission-hashes.json'));
+  const expected=execution.submissionHashes;
   if(JSON.stringify(expected)!==JSON.stringify(await files(snapshot)))throw Error('Submission changed; existing evidence preserved');
-  try{context=await read(contextPath);}catch(e){if(e.code!=='ENOENT')throw e;context={receipt:p.receipt,gradingStartedAt:null};}
+  context=await read(contextPath);
  }else{
   let lock;
   try{lock=await fs.open(path.join(dir,'grading.lock'),'wx');}catch(e){if(e.code!=='EEXIST')throw e;throw Error('评分仍在运行或执行状态未知，已有作答保留，不会重复评分。');}
@@ -165,9 +165,6 @@ async function freezeUnlocked(p){
   const rel='questions/'+cal.id+'/'+cal.revision+'-'+hash.slice(0,16),dest=await within(bank,rel);await fs.mkdir(path.dirname(dest),{recursive:true});
   try{await fs.rename(staging,dest);published=true;}catch(e){if(!['EEXIST','ENOTEMPTY'].includes(e.code))throw e;if(JSON.stringify(await files(dest))!==JSON.stringify(hashes))throw Error('Unregistered release conflicts');}
   const entry={key,title:spec.title,revision:spec.revision,environment:spec.environment,path:rel,sourceManifestSha256:hash,files:hashes};
-  // Old builds did not record lock ownership. Never guess whether that writer lives.
-  let legacyLock=false;try{await fs.lstat(path.join(home,'freeze.lock'));legacyLock=true;}catch(e){if(e.code!=='ENOENT')throw e;}
-  if(legacyLock){let old;try{old=await read(path.join(bank,'distribution.json'));}catch(e){if(e.code!=='ENOENT')throw e;}if(JSON.stringify(old?.questions?.find(q=>q.key===key))===JSON.stringify(entry)){confirmed=true;return {key:'custom:'+key,status:'frozen'};}throw Error('旧冻结操作状态未知，请先核对原执行；已有题目与材料保留。');}
   const request=path.join(bank,'freeze-'+crypto.randomUUID()+'.json');
   try{await write(request,entry);const execution=await runCommand('python3',['-I',path.join(__dirname,'freeze-publish.py'),bank,request],{timeout:30000});if(execution.code!==0||execution.timedOut)throw Error('题库发布尚未确认，请重试核对；已有题目与材料保留。');}finally{await fs.unlink(request).catch(()=>{});}
   confirmed=true;return {key:'custom:'+key,status:'frozen'};
