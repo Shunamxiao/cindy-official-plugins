@@ -197,12 +197,20 @@ Object.assign(english,{
  "消息缓存": "Message cache"
 });
 Object.assign(english,{'启用 Auto 并继续':'Enable Auto and continue','允许修改并继续':'Allow file changes and continue'});
+Object.assign(english,{
+ '请检查 Python 执行权限。':'Check Python execution permissions.',
+ '请关闭不需要的程序，释放系统资源后重试。':'Close unused programs to free system resources, then retry.',
+ '请检查 Python 程序和系统资源后重试。':'Check the Python executable and system resources, then retry.',
+ '正在确认 Worker 槽位释放，已有成绩已保存。':'Waiting for Worker slot release confirmation. Existing scores are saved.'
+});
 function translate(locale,text,params={}){
  if(typeof text!=='string')return text;
  let result=text;
  if(locale!=='zh-CN'){
   result=english[text]||text;
-  if(result===text)for(const prefix of ['作答准备失败：','评分受阻：','诊断复核暂未完成：'])if(text.startsWith(prefix)){result=english[prefix]+text.slice(prefix.length);break;}
+  const startup=text.match(/^Python 无法启动（([^）]+)）。(.*)已有作答和成绩保留。$/);
+  if(startup)result=`Python could not start (${startup[1]}). ${english[startup[2]]||startup[2]} Existing answers and results are preserved.`;
+  if(result===text)for(const prefix of ['作答准备失败：','评分受阻：','诊断复核暂未完成：'])if(text.startsWith(prefix)){result=english[prefix]+translate(locale,text.slice(prefix.length));break;}
  }
  return result.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(params,key)?String(params[key]):match);
 }

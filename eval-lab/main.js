@@ -3,18 +3,18 @@ function applyAssessment(item,result,fallback='graded'){
 }
 async function settleWorkers(j,team){
   let unavailable;
-  for(const item of j.items.filter(x=>x.released&&x.status==='blocked'&&x.terminalReceipt?.status==='done')){
+  for(const item of j.items.filter(x=>x.released&&x.status==='blocked'&&x.terminalReceipt?.status==='done'&&acceptedWorkerConfig(x,x.terminalReceipt.acceptedConfig,x.terminalReceipt.workingDir))){
    try{applyAssessment(item,await node('grade',{runId:item.runId,receipt:{...item.terminalReceipt,channel:'Orca Worker'}}));}
    catch(e){if(isTransientReadError(e))throw e;item.error='评分受阻：'+e.message;}
   }
   for(const item of j.items){const w=team.workers.find(w=>w.label===workerLabel(item.runId));if(w)item.telemetry={acceptedAt:w.acceptedAt,startedAt:w.startedAt,completedAt:workerCompletedAt(w),timingBasis:w.timingBasis,usage:w.usage};}
-  for(const item of j.items.filter(x=>!doneItem(x))){
+  for(const item of j.items.filter(x=>!doneItem(x)&&!x.released)){
    const matches=team.workers.filter(w=>w.label===workerLabel(item.runId));
    if(matches.length>1){item.status='blocked';item.error='同一作答出现多个 Worker，需主任务核对，不自动计分';continue;}
    const w=matches[0];if(!w)continue;
    item.workerId=w.worker_id;item.taskId=w.session_id;
    const cfg=taskRoute(item.config);
-   if(w.model!==cfg.model||w.agent_kind!==cfg.agentKind||(w.effort||'default')!==cfg.effort||w.providerId!==cfg.providerId||w.fastMode!==false||w.working_dir!==item.prepared.workspace){
+   if(!acceptedWorkerConfig(item,{model:w.model,agentKind:w.agent_kind,effort:w.effort||'default',providerId:w.providerId,fastMode:w.fastMode},w.working_dir)){
     item.status='blocked';item.error='Worker 实际配置或目录不匹配，未计分';continue;
    }
    if(workerCompletedAt(w)&&w.status==='done'&&!workerPending(w)){
@@ -34,7 +34,7 @@ async function settleWorkers(j,team){
    if(j.status==='stopping'&&w?.status==='done'&&!item.result)continue;
    if(w&&(item.result||item.status==='blocked')&&!item.released&&w.worker_id===item.workerId&&w.session_id===item.taskId&&workerCompletedAt(w)&&!workerPending(w)){
     // Persist the failure and exact observed terminal before freeing its slot.
-    item.terminalReceipt={...item.telemetry,workerId:w.worker_id,sessionId:w.session_id,completedAt:workerCompletedAt(w),status:w.status,provenance:'host-team-observed'};
+    item.terminalReceipt={...item.telemetry,workerId:w.worker_id,sessionId:w.session_id,completedAt:workerCompletedAt(w),status:w.status,provenance:'host-team-observed',acceptedConfig:{model:w.model,agentKind:w.agent_kind,effort:w.effort||'default',providerId:w.providerId,fastMode:w.fastMode},workingDir:w.working_dir};
     if(!item.result){const result=await node('record_failure',{runId:item.runId,reason:item.error,receipt:item.terminalReceipt});if(['graded','environment_invalid'].includes(result.status))applyAssessment(item,result);else item.result=result;}
     await saveBatch(j);
     const release=await cindy.tasks.releaseWorker({taskId:j.coordinator.taskId,workerId:w.worker_id,completedAt:workerCompletedAt(w)});
@@ -43,6 +43,10 @@ async function settleWorkers(j,team){
   }
   if(unavailable)throw unavailable;
 }
+function acceptedWorkerConfig(item,route,workingDir){
+ const expected=taskRoute(item.config);return !!route&&Object.keys(expected).every(key=>route[key]===expected[key])&&workingDir===item.prepared?.workspace;
+}
+const pendingWorkerRelease=(j,team)=>j.items.some(item=>item.terminalReceipt&&item.workerId&&!item.released&&team.workers.some(w=>w.worker_id===item.workerId));
 const workerLabel=runId=>'eval-'+runId.replaceAll('-','').slice(0,27);
 const workerPending=w=>!!(w.is_working||w.queued_count||w.queue_paused||w.waitingForUser);
 const workerCompletedAt=w=>w.lastTurnEndedAt||w.completedAt;
@@ -133,7 +137,8 @@ async function advanceCoordinator(j){
     await coordinatorMessage(j,'读取最新调度清单 '+JSON.stringify(schedule.path)+'，核对现有 label 后只派发 assignments。容量不足等待回报；不要重发 active/settled。','schedule-'+j.checkSequence);
    }
   }
-  if(j.items.every(doneItem)&&!activeWorkers.length&&!team.leadWorking){j.status='completed';j.phase='completed';j.qualityVersion=1;j.message=j.items.some(x=>x.status==='environment_invalid')?'本批已结束；环境受阻的作答不计入正式总分。':'';}
+  if(pendingWorkerRelease(j,team)){j.phase='coordinating';j.message='正在确认 Worker 槽位释放，已有成绩已保存。';}
+  else if(j.items.every(doneItem)&&!activeWorkers.length&&!team.leadWorking){j.status='completed';j.phase='completed';j.qualityVersion=1;j.message=j.items.some(x=>x.status==='environment_invalid')?'本批已结束；环境受阻的作答不计入正式总分。':'';}
   else if(j.items.every(x=>doneItem(x)||x.status==='blocked')&&!activeWorkers.length&&!team.leadWorking){
    if(j.items.every(x=>doneItem(x)||!x.prepared)){j.status='completed';j.phase='completed';j.qualityVersion=1;j.message='本批已结束，未准备的作答未运行、未计分。修复准备错误后可对遗漏题目开始新评测；已有成绩保留。';}
    else {j.status='needs_attention';j.phase='blocked';j.message='部分作答受阻，已有成绩已保存。';}
@@ -334,7 +339,7 @@ async function stopBatch(j){
  await settleWorkers(j,team);
  const ungradedCompleted=j.items.some(item=>!doneItem(item)&&team.workers.some(w=>w.label===workerLabel(item.runId)&&w.status==='done'&&workerCompletedAt(w)&&!workerPending(w)));
  if(ungradedCompleted){j.phase='blocked';j.message='已停止派发，已交卷作答的评分尚未完成；文件保留，请处理评分错误后重试。';await saveBatch(j);return jobView(j);}
- if(ended&&!team.leadWorking&&!team.waitingForUser&&!team.workers.some(workerPending)){j.status='cancelled';j.phase='cancelled';j.message='评测已停止，已完成成绩保留。';for(const item of j.items.filter(x=>!doneItem(x)))item.status='cancelled';}
+ if(ended&&!pendingWorkerRelease(j,team)&&!team.leadWorking&&!team.waitingForUser&&!team.workers.some(workerPending)){j.status='cancelled';j.phase='cancelled';j.message='评测已停止，已完成成绩保留。';for(const item of j.items.filter(x=>!doneItem(x)))item.status='cancelled';}
  else j.message='等待主任务停止回执；未确认前不会开始新批次。';
  await saveBatch(j);return jobView(j);
 }

@@ -20,3 +20,11 @@ test('Python probe rejects nonzero interpreters and accepts successful exit',asy
   }
  }finally{cp.spawn=original;}
 });
+test('Python startup guidance keeps error codes and Chinese plus English fallback',()=>{
+ const {startupError}=require('../node/python-runtime.cjs'),{translate}=require('../i18n.js');
+ for(const code of ['EACCES','EPERM','EMFILE','ENFILE','EAGAIN','ENOMEM','EIO',undefined]){
+  const e=startupError(code);assert.equal(e.code,code||'PYTHON_START_FAILED');assert.match(e.message,/Python 无法启动/);assert.match(e.message,new RegExp(code||'UNKNOWN'));
+  assert.equal(translate('zh-CN',e.message),e.message);
+  for(const locale of ['en','ja','ko']){const value=translate(locale,e.message);assert.match(value,/Python could not start/);assert.doesNotMatch(value,/[\u4e00-\u9fff]/);assert.match(value,new RegExp(code||'UNKNOWN'));assert.doesNotMatch(translate(locale,'评分受阻：'+e.message),/[\u4e00-\u9fff]/);}
+ }
+});

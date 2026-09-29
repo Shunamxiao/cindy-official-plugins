@@ -943,3 +943,28 @@ test('question listing retains both installed offline and default update entries
  const keys=result.result.questions.map(x=>x.key);assert.ok(keys.includes('audio@v2'));assert.ok(keys.includes('online:fixture:audio@v2'));
  for(const question of ['audio@v2','online:fixture:audio@v2']){const start=b.calls.length;await b.tool({type:'tool-call',tool:'prepare_run',callId:question,args:{question,...configuration}});assert.equal(b.calls.slice(start).some(x=>x.method==='online_inspect'),question==='audio@v2');}
 });
+test('terminal slots remain recoverable until release succeeds or Host no longer lists them',async()=>{
+ for(const mode of ['completed','blocked','stopping','absent']){
+  const b=bridge();await b.ui('start','start',args);let releases=0,grades=0,absent=false;
+  const request=b.cindy.node.request;b.cindy.node.request=async x=>{if(x.method==='grade'){grades++;if(mode==='blocked')throw Error('grader failed');}return request(x);};
+  b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:absent?[]:[worker(b)]});
+  b.cindy.tasks.releaseWorker=async()=>({ok:++releases>1,message:'temporarily occupied'});
+  if(mode==='stopping'){b.config.batch.status='stopping';b.config.batch.stopSent=true;b.cindy.tasks.getRun=async()=>({status:'completed'});}
+  await b.ui('first','query');assert.ok(!['completed','cancelled'].includes(b.config.batch.status));assert.equal(b.config.batch.qualityVersion,undefined);assert.equal(releases,1);
+  const sent=b.calls.filter(x=>x.send).length;
+  if(mode==='absent')absent=true;
+  await b.ui('retry','query');assert.equal(releases,mode==='absent'?1:2);
+  assert.equal(b.config.batch.status,mode==='blocked'?'needs_attention':mode==='stopping'?'cancelled':'completed');
+  assert.equal(b.calls.filter(x=>x.send).length,sent);if(mode!=='blocked')assert.equal(grades,1);
+ }
+});
+test('released mismatched workers never enter local regrading on resume',async()=>{
+ for(const change of [{model:'wrong'},{agent_kind:'claude'},{effort:'low'},{providerId:'wrong'},{fastMode:true},{working_dir:'/wrong'}]){
+  const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let grades=0;
+  b.cindy.node.request=async x=>{if(x.method==='grade')grades++;if(x.method==='reconcile_result')return {ok:true,result:{status:'failed',score:null}};return request(x);};
+  b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[worker(b,change)]});
+  await b.ui('mismatch','query');assert.equal(b.config.batch.items[0].released,true);
+  b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[]});
+  await b.ui('resume','resume_coordination');assert.equal(grades,0);assert.equal(b.config.batch.items[0].status,'blocked');assert.equal(b.config.batch.items[0].result.score,null);
+ }
+});
