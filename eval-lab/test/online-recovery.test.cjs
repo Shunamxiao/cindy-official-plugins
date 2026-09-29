@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const {service}=require('../node/online.cjs'),{within,files,runCommand}=require('../node/engine.cjs');
 const url='https://github.com/makecindy/eval-bank/releases/download/test/index.json';
 const digest=s=>crypto.createHash('sha256').update(s).digest('hex');
-test('corrupt bank replacement preserves the old tree on verification, cancellation and publication failures',async()=>{
+for(const oversized of [false,true])test('corrupt bank replacement preserves the old tree on failures; oversized='+oversized,async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'bank-repair-')),rename=fs.rename;
  try{
   const spec=JSON.stringify({id:'fixture',revision:'v1',scoringVersion:'v1',title:'Fixture',groups:[{id:'core',weight:'1',mode:'all',items:['a']}]}),archive=path.join(root,'archive'),bytes=Buffer.from('fake archive');await fs.writeFile(archive,bytes);
@@ -10,19 +10,21 @@ test('corrupt bank replacement preserves the old tree on verification, cancellat
   const index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[q],artifacts:{[name]:{url:url.replace('index.json',name),sha256:sha,bytes:bytes.length,expandedBytes:spec.length}}};
   let mode='normal',ready,release;const svc=service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,fetchFile:async(u,d)=>{const b=JSON.stringify(index);await fs.writeFile(d,b);return {sha256:digest(b)};},runCommand:async(c,args)=>{await fs.writeFile(path.join(args[2],'question.json'),mode==='invalid'?'bad':spec);if(mode==='cancel'){ready();await new Promise(r=>release=r);}return {code:0};}});
   const inspected=await svc.inspect({root,url}),p={root,indexId:inspected.indexId,question:q.key,hostArtifacts:{[sha]:archive}};
-  const installed=await svc.install(p),manifest=path.join(installed.bank,'distribution.json');await fs.writeFile(manifest,'broken');
-  mode='invalid';await assert.rejects(svc.install(p),/校验/);assert.equal(await fs.readFile(manifest,'utf8'),'broken');
-  mode='cancel';const started=new Promise(r=>ready=r),op=svc.begin({root}),run=svc.install({...p,...op}),rejected=assert.rejects(run,/取消/);await started;const stop=svc.cancel({root,...op});release();await stop;await rejected;assert.equal(await fs.readFile(manifest,'utf8'),'broken');
+  const installed=await svc.install(p),manifest=path.join(installed.bank,'distribution.json');await fs.writeFile(manifest,'broken');if(oversized)await fs.truncate(manifest,16*1024*1024+1);
+  const checkOld=async file=>{assert.equal((await fs.stat(file)).size,oversized?16*1024*1024+1:6);assert.equal((await fs.readFile(file)).subarray(0,6).toString(),'broken');};
+  mode='invalid';await assert.rejects(svc.install(p),/校验/);await checkOld(manifest);
+  mode='cancel';const started=new Promise(r=>ready=r),op=svc.begin({root}),run=svc.install({...p,...op}),rejected=assert.rejects(run,/取消/);await started;const stop=svc.cancel({root,...op});release();await stop;await rejected;await checkOld(manifest);
   mode='normal';fs.rename=async(a,b)=>{if(String(a).includes('/staging-')&&b===installed.bank)throw Object.assign(Error('publish failed'),{code:'EIO'});return rename(a,b);};
-  await assert.rejects(svc.install(p));assert.equal(await fs.readFile(manifest,'utf8'),'broken');fs.rename=rename;
+  await assert.rejects(svc.install(p));await checkOld(manifest);fs.rename=rename;
   await svc.install(p);assert.equal(JSON.parse(await fs.readFile(manifest)).format,'eval-lab-bank-v1');
-  const backups=await fs.readdir(path.join(root,'online/backups'));assert.equal(backups.length,1);assert.equal(await fs.readFile(path.join(root,'online/backups',backups[0],'distribution.json'),'utf8'),'broken');
+  const backups=await fs.readdir(path.join(root,'online/backups'));assert.equal(backups.length,1);await checkOld(path.join(root,'online/backups',backups[0],'distribution.json'));
  }finally{fs.rename=rename;await fs.rm(root,{recursive:true,force:true});}
 });
 test('damaged installed metadata does not prevent the page from loading or starting default repair',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'bank-catalog-'));try{
   const dir=path.join(root,'eval-lab-data/online/banks','a'.repeat(64));await fs.mkdir(dir,{recursive:true});
-  for(const text of ['null','{broken',JSON.stringify({format:'eval-lab-bank-v1',questions:null})]){await fs.writeFile(path.join(dir,'distribution.json'),text);const result=await require('../node/engine.cjs').dispatch('bank',{root});assert.equal(result.questions.length,0);assert.equal(result.errors.length,1);}
+  const healthy=path.join(path.dirname(dir),'b'.repeat(64));await fs.mkdir(healthy);await fs.writeFile(path.join(healthy,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'healthy@v1',title:'Healthy'}]}));
+  for(const text of ['null','{broken',JSON.stringify({format:'eval-lab-bank-v1',questions:null}),'oversized']){await fs.writeFile(path.join(dir,'distribution.json'),text);if(text==='oversized')await fs.truncate(path.join(dir,'distribution.json'),16*1024*1024+1);const result=await require('../node/engine.cjs').dispatch('bank',{root});assert.equal(result.questions.length,1);assert.equal(result.questions[0].title,'Healthy');assert.equal(result.errors.length,1);}
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
 function fixture(root){const name='a'.repeat(64)+'.zip',index={format:'eval-lab-online-v1',platform:'darwin-arm64',questions:[{key:'fixture@v1',path:'questions/fixture',files:{},layers:[{artifact:name,mount:''}]}],artifacts:{[name]:{url:url.replace('index.json',name),bytes:1,expandedBytes:1,sha256:'a'.repeat(64)}}},text=JSON.stringify(index);return {id:digest(text),svc:service({platform:'darwin',arch:'arm64',base:async()=>root,within,files,runCommand,fetchFile:async(u,d)=>{await fs.writeFile(d,text);return {sha256:digest(text)};}})};}
