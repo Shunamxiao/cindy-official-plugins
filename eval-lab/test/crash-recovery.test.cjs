@@ -6,7 +6,7 @@ async function fixture(fn){
   await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.mkdir(path.join(q,'author'));
   await fs.writeFile(path.join(q,'candidate/answer'),'paid answer');
   await fs.writeFile(path.join(q,'question.json'),JSON.stringify({id:'q',revision:'v1',title:'Fixture',scoringVersion:'v1',groups:[{id:'g',weight:'1',mode:'all',items:['a']}]}));
-  await fs.writeFile(path.join(q,'author/grade.py'),"import json,sys,pathlib\npathlib.Path(sys.argv[1],'generated-test-cache').write_text('test artifact'); p=pathlib.Path(sys.argv[2]); counter=p.parent/'executions'; counter.write_text(counter.read_text()+'x' if counter.exists() else 'x'); p.write_text(json.dumps({'status':'graded','items':{'a':True}}))\n");
+  await fs.writeFile(path.join(q,'author/grade.py'),"import json,sys,pathlib\npathlib.Path(sys.argv[1],'generated-test-cache').write_text('test artifact'); p=pathlib.Path(sys.argv[2]); counter=(p.parent.parent if p.parent.name.startswith('grading-') else p.parent)/'executions'; counter.write_text(counter.read_text()+'x' if counter.exists() else 'x'); p.write_text(json.dumps({'status':'graded','items':{'a':True}}))\n");
   await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'q@v1',path:'q',files:await files(q)}]}));
   await fn({root,bank,question:'q@v1',runId:'same-run',model:'m',provider:'p',harness:'h',effort:'e'});
  }finally{await fs.rm(root,{recursive:true,force:true});}
@@ -35,31 +35,65 @@ test('a killed result publication recovers from process evidence without running
  assert.equal(await fs.readFile(path.join(dir,'executions'),'utf8'),'x');
  assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
 }));
-test('unknown grading attempts are never replayed or mistaken for completion',()=>fixture(async p=>{
+test('pre-release attempt markers do not block local regrading or change paid answers',()=>fixture(async p=>{
  const run=await dispatch('prepare',p),dir=path.join(p.root,'eval-lab-data/runs/same-run');await fs.writeFile(path.join(dir,'grading.lock'),'');
- await assert.rejects(dispatch('grade',{root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}}),/不会重复评分/);
- await assert.rejects(fs.access(path.join(dir,'executions')));assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
-}));
-
-test('a known snapshot copy failure can retry without losing the paid workspace',()=>fixture(async p=>{
- const run=await dispatch('prepare',p),copy=fs.cp;
+ await fs.mkdir(path.join(dir,'submission'));await fs.writeFile(path.join(dir,'submission/answer'),'incomplete old snapshot');
+ await fs.writeFile(path.join(dir,'grading-context.json'),'{}');
  const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
- try{fs.cp=async()=>{throw Object.assign(Error('copyfile '+p.root+'/private-source -> '+p.root+'/private-output'),{code:'ENOSPC'});};await assert.rejects(dispatch('grade',request),e=>e.code==='ENOSPC'&&!e.message.includes(p.root)&&/释放磁盘/.test(e.message));}finally{fs.cp=copy;}
- assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');assert.equal((await dispatch('grade',request)).score,1);
+ assert.equal((await dispatch('grade',request)).score,1);
+ assert.equal(await fs.readFile(path.join(dir,'grading.lock'),'utf8'),'');
+ assert.equal(await fs.readFile(path.join(dir,'submission/answer'),'utf8'),'incomplete old snapshot');
+ assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
 }));
-
-test('grading copy and cleanup failures preserve paid files and hide filesystem paths',async()=>{
- for(const code of ['ENOSPC','EDQUOT','EACCES','EPERM','EROFS','EIO','ENOENT','UNKNOWN'])await fixture(async p=>{
-  const run=await dispatch('prepare',p),copy=fs.cp,request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
-  fs.cp=async()=>{throw Object.assign(Error('copyfile '+p.root+'/private-source'),{code});};
-  try{await assert.rejects(dispatch('grade',request),e=>e.code===code&&!e.message.includes(p.root)&&/评分快照复制失败/.test(e.message));}finally{fs.cp=copy;}
+function injectGrading(phase,marker){
+ const spawn=cp.spawn;let child;
+ cp.spawn=function(command,args,options){
+  if(args[1]?.endsWith('/grade-run.py')){args=[args[0],path.join(__dirname,'fixtures/grade-crash.py'),args[1],phase,marker,...args.slice(2)];child=spawn.call(this,command,args,options);return child;}
+  return spawn.call(this,command,args,options);
+ };
+ return {restore:()=>{cp.spawn=spawn;},child:()=>child};
+}
+async function waitFile(file){
+ const deadline=Date.now()+10000;
+ while(Date.now()<deadline){try{return await fs.readFile(file,'utf8');}catch(e){if(e.code!=='ENOENT')throw e;}await new Promise(r=>setTimeout(r,20));}
+ throw Error('Grading pause not reached');
+}
+test('a grader surviving its Node parent keeps ownership and publishes a reusable result',()=>fixture(async p=>{
+ const run=await dispatch('prepare',p),dir=path.join(p.root,'eval-lab-data/runs/same-run'),marker=path.join(p.root,'pause');
+ const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+ const child=cp.fork(path.join(__dirname,'fixtures/crash-child.cjs'),[],{stdio:['ignore','ignore','ignore','ipc']});
+ const closed=new Promise(resolve=>child.once('close',resolve));let graderPid;
+ try{
+  child.send({method:'grade',p:request,gradingPause:marker});graderPid=Number(await waitFile(marker));
+  child.kill('SIGKILL');await closed;
+  await assert.rejects(dispatch('grade',request),/不会重复评分/);
+  await fs.writeFile(marker+'.continue','');await waitFile(path.join(dir,'grader-execution.json'));
+  assert.equal((await dispatch('grade',request)).score,1);
+  assert.equal(await fs.readFile(path.join(dir,'executions'),'utf8'),'x');
+  assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
+ }finally{child.kill('SIGKILL');await closed;if(graderPid)try{process.kill(graderPid,'SIGKILL');}catch{}}
+}));
+for(const phase of ['copy','receipt'])test('killed grading '+phase+' releases its lock and retries only local scoring',()=>fixture(async p=>{
+ const run=await dispatch('prepare',p),dir=path.join(p.root,'eval-lab-data/runs/same-run'),marker=path.join(p.root,'pause');
+ const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+ const injected=injectGrading(phase,marker),first=dispatch('grade',request);const rejected=assert.rejects(first,/本地评分中断/);
+ try{
+  await waitFile(marker);injected.restore();
+  await assert.rejects(dispatch('grade',request),/不会重复评分/);
+  injected.child().kill('SIGKILL');await rejected;
+ }finally{injected.restore();injected.child()?.kill('SIGKILL');}
+ assert.equal((await dispatch('grade',request)).score,1);
+ assert.equal(await fs.readFile(path.join(dir,'executions'),'utf8'),phase==='copy'?'x':'xx');
+ assert.equal((await dispatch('grade',request)).score,1);
+ assert.equal(await fs.readFile(path.join(dir,'executions'),'utf8'),phase==='copy'?'x':'xx');
+ assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
+}));
+test('grading copy failures retain paid files and recover after storage becomes available',async()=>{
+ for(const code of ['ENOSPC','EDQUOT','EACCES','EPERM','EROFS','EIO','ENOENT'])await fixture(async p=>{
+  const run=await dispatch('prepare',p),request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+  const injected=injectGrading('error-'+code,path.join(p.root,'unused'));
+  try{await assert.rejects(dispatch('grade',request),e=>e.code===code&&!e.message.includes(p.root)&&/评分快照复制失败/.test(e.message));}finally{injected.restore();}
   assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');assert.equal((await dispatch('grade',request)).score,1);
- });
- await fixture(async p=>{
-  const run=await dispatch('prepare',p),copy=fs.cp,remove=fs.rm,request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
-  fs.cp=async()=>{throw Object.assign(Error(p.root),{code:'EIO'});};fs.rm=async()=>{throw Object.assign(Error(p.root),{code:'EACCES'});};
-  try{await assert.rejects(dispatch('grade',request),e=>e.code==='EACCES'&&!e.message.includes(p.root)&&/清理未完成/.test(e.message));}finally{fs.cp=copy;fs.rm=remove;}
-  await assert.rejects(dispatch('grade',request),/不会重复评分/);assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
  });
 });
 

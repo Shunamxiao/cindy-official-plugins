@@ -17,10 +17,11 @@ async function files(root,dir='',signal){signal?.throwIfAborted();const rows={};
 async function base(root){if(!path.isAbsolute(root))throw Error('Choose an absolute storage directory');root=await fs.realpath(root);const out=await within(root,'eval-lab-data');await fs.mkdir(out,{recursive:true});return out;}
 async function bankInfo(bank){const root=await fs.realpath(bank);const manifest=await read(path.join(root,'distribution.json'));if(!manifest||manifest.format!=='eval-lab-bank-v1')throw Error('Not an Eval Lab bank');return {root,manifest};}
 async function verifyQuestion(bank,key){const {root,manifest}=await bankInfo(bank);const q=manifest.questions.find(q=>q.key===key);if(!q)throw Error('Question not found');const dir=await within(root,q.path);const actual=await files(dir);if(Object.keys(actual).length!==Object.keys(q.files).length)throw Error('Question package has unregistered or missing files');for(const [rel,h] of Object.entries(q.files)){if(actual[rel]!==h)throw Error('Question package changed: '+rel);}const spec=await read(path.join(dir,'question.json'));validateSpec(spec);if(q.key!==spec.id+'@'+spec.revision||(q.revision!==undefined&&q.revision!==spec.revision))throw Error('Question identity mismatch');return {q,dir,spec};}
-async function runCommand(command,args,{cwd,timeout=840000,signal}={}){
+async function runCommand(command,args,{cwd,timeout=840000,signal,input}={}){
  signal?.throwIfAborted();
  return new Promise(resolve=>{
-  const p=cp.spawn(command,args,{cwd,detached:process.platform!=='win32',env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:'en_US.UTF-8',PYTHONDONTWRITEBYTECODE:'1'},stdio:['ignore','pipe','pipe']});
+  const p=cp.spawn(command,args,{cwd,detached:process.platform!=='win32',env:{PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,LANG:'en_US.UTF-8',PYTHONDONTWRITEBYTECODE:'1'},stdio:[input===undefined?'ignore':'pipe','pipe','pipe']});
+  if(input!==undefined){p.stdin.on('error',()=>{});p.stdin.end(input);}
   let out='',err='',timedOut=false;
   const kill=()=>{try{process.platform==='win32'?p.kill('SIGKILL'):process.kill(-p.pid,'SIGKILL');}catch{}};
   const timer=setTimeout(()=>{timedOut=true;kill();},timeout);
@@ -72,40 +73,21 @@ async function grade(p){
  try{return await publish(await read(completionPath));}catch(e){if(e.code!=='ENOENT')throw e;}
  const {q,dir:questionDir,spec}=await verifyQuestion(r.bank,r.question);
  if(sha(JSON.stringify(q.files))!==r.distributionHash)throw Error('Distribution changed');
- const snapshot=path.join(dir,'submission'),output=path.join(dir,'external-grade.json'),contextPath=path.join(dir,'grading-context.json');
- let execution,context;
+ let execution;
  try{execution=await read(path.join(dir,'grader-execution.json'));}catch(e){if(e.code!=='ENOENT')throw e;}
- if(execution){
-  // A complete process receipt permits publication, never another execution.
-  if(typeof execution.timedOut!=='boolean'||!(execution.code===null||Number.isInteger(execution.code)))throw Error('Grading receipt mismatch');
-  const expected=execution.submissionHashes;
-  if(JSON.stringify(expected)!==JSON.stringify(await files(snapshot)))throw Error('Submission changed; existing evidence preserved');
-  context=await read(contextPath);
- }else{
-  let lock;
-  try{lock=await fs.open(path.join(dir,'grading.lock'),'wx');}catch(e){if(e.code!=='EEXIST')throw e;throw Error('评分仍在运行或执行状态未知，已有作答保留，不会重复评分。');}
-  // This is an attempt marker, not a timeout lease. Keep it until evidence exists.
-  await lock.close();
-  context={receipt:p.receipt,gradingStartedAt:Date.now()};let contextWritten=false,snapshotCreated=false;
-  try{
-   await write(contextPath,context);contextWritten=true;
-   await fs.mkdir(snapshot);snapshotCreated=true;
-   const source=r.workspace||path.join(dir,'workspace');
-   for(const name of await fs.readdir(source))await fs.cp(path.join(source,name),path.join(snapshot,name),{recursive:true,errorOnExist:true,force:false});
-   await write(path.join(dir,'submission-hashes.json'),await files(snapshot));
-  }catch(error){
-   // This call has not spawned a grader. Only its newly created preparation may be removed.
-   try{
-    if(snapshotCreated)await fs.rm(snapshot,{recursive:true,force:true});
-    if(contextWritten)await fs.unlink(contextPath);
-    await fs.unlink(path.join(dir,'grading.lock'));
-   }catch(cleanup){throw inputError(cleanup,true,'评分快照');}
-   throw inputError(error,false,'评分快照');
-  }
-  execution=await runCommand('python3',['-B',path.join(questionDir,'author/grade.py'),snapshot,output]);
-  execution={...execution,submissionHashes:await files(snapshot)};
-  await write(path.join(dir,'grader-execution.json'),execution);
+ if(!execution){
+  const processResult=await runCommand('python3',['-B',path.join(__dirname,'grade-run.py'),dir,r.workspace||path.join(dir,'workspace'),path.join(questionDir,'author/grade.py')],{input:JSON.stringify(p.receipt)});
+  if(processResult.code===75)throw Error('评分仍在运行或执行状态未知，已有作答保留，不会重复评分。');
+  if(processResult.code===74){const code=/EVAL_INPUT_ERROR:([A-Z_]+)/.exec(processResult.stderr)?.[1]||'EIO';throw inputError({code},false,'评分快照');}
+  if(processResult.code!==0||processResult.timedOut)throw Error('本地评分中断，请恢复评测以重新评分；已有作答保留，不会重新调用模型。');
+  execution=await read(path.join(dir,'grader-execution.json'));
  }
+ if(typeof execution.timedOut!=='boolean'||!(execution.code===null||Number.isInteger(execution.code)))throw Error('Grading receipt mismatch');
+ const attempt=execution.attempt?await within(dir,id(execution.attempt)):dir;
+ const snapshot=path.join(attempt,'submission'),output=path.join(attempt,'external-grade.json');
+ const expected=execution.submissionHashes,actual=await files(snapshot);
+ if(!expected||Object.keys(expected).length!==Object.keys(actual).length||Object.entries(expected).some(([name,hash])=>actual[name]!==hash))throw Error('Submission changed; existing evidence preserved');
+ const context=await read(path.join(attempt,'grading-context.json'));
  if(!context.receipt||context.receipt.sessionId!==p.receipt.sessionId||context.receipt.completedAt!==p.receipt.completedAt)throw Error('Terminal receipt conflict');
  let raw;try{raw=await read(output);}catch{raw={status:'environment_invalid',reason:'Grader produced no result'};}
  const environmentDiagnostic=await environmentEvidence(r.workspace,path.join(questionDir,'candidate'));

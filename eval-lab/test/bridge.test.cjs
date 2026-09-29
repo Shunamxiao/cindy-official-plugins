@@ -909,11 +909,11 @@ test('each installation step receives the same Host tokens and unchanged Node de
 });
 test('released completed workers recover saved grading evidence without redispatch',async()=>{
  const b=bridge();await b.ui('start','start',args);const request=b.cindy.node.request;let fail=true;
- b.cindy.node.request=async x=>{if(x.method==='grade'&&fail)throw Error('publication interrupted');return request(x);};
+ b.cindy.node.request=async x=>{if(x.method==='grade'&&fail)throw Error('本地评分中断，请恢复评测以重新评分；已有作答保留，不会重新调用模型。');return request(x);};
  b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[worker(b)]});
  await b.ui('first','query');const before=b.config.batch.items[0];assert.equal(before.released,true);assert.equal(before.status,'blocked');
  fail=false;b.cindy.tasks.getTeam=async()=>({ok:true,leadWorking:false,workers:[]});
- const creates=b.calls.filter(x=>x.create).length;await b.ui('again','resume_coordination');assert.equal(b.config.batch.items[0].status,'graded');assert.equal(b.calls.filter(x=>x.create).length,creates);
+ const creates=b.calls.filter(x=>x.create).length,sends=b.calls.filter(x=>x.send).length;await b.ui('again','resume_coordination');assert.equal(b.config.batch.items[0].status,'graded');assert.equal(b.calls.filter(x=>x.create).length,creates);assert.equal(b.calls.filter(x=>x.send).length,sends);
 });
 test('incompatible selected storage never replaces the previously saved root',async()=>{
  const b=bridge(),request=b.cindy.node.request;

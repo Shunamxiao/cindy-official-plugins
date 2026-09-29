@@ -1,4 +1,5 @@
 const english={
+'本地评分中断，请恢复评测以重新评分；已有作答保留，不会重新调用模型。':'Local grading was interrupted. Resume the evaluation to grade the saved answer again without calling the model again.',
 '请更新 Cindy 以使用主任务协调评测':'Please update Cindy to run evaluations with a coordinator task.',
 '同时作答数必须为正整数':'Concurrent answers must be a positive integer',
 "作答目录已有修改或未知文件，保留现场，不自动覆盖。":"The answer directory contains changed or unknown files. They are preserved and will not be overwritten.","评分仍在运行或执行状态未知，已有作答保留，不会重复评分。":"Grading is running or its execution state is unknown. The answer is preserved and grading will not be repeated.","题库发布尚未确认，请重试核对；已有题目与材料保留。":"Bank publication is not confirmed. Retry to verify it; existing questions and materials are preserved.","旧冻结操作状态未知，请先核对原执行；已有题目与材料保留。":"The previous freeze operation has an unknown execution state. Verify the original operation first; existing questions and materials are preserved.",
