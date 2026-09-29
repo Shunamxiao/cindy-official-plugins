@@ -215,3 +215,15 @@ test('obsolete freeze marker is preserved but does not block the current manifes
  await fs.writeFile(marker,'development marker');assert.equal((await dispatch('freeze',{root,checkId:cal.checkId})).status,'frozen');
  assert.equal(await fs.readFile(marker,'utf8'),'development marker');
 }));
+
+test('repeated freeze reuses the published version without allocating staging',()=>fixture(async(root)=>{
+ const cal=await dispatch('calibrate',{root,id:'sample',revision:'v1'}),p={root,checkId:cal.checkId},first=await dispatch('freeze',p),mkdir=fs.mkdtemp;
+ fs.mkdtemp=async function(prefix,...args){if(path.basename(prefix)==='staging-')throw Error('unexpected staging copy');return mkdir.call(this,prefix,...args);};
+ try{assert.deepEqual(await dispatch('freeze',p),first);}finally{fs.mkdtemp=mkdir;}
+}));
+test('freeze rejects edits made while copying the calibrated draft',()=>fixture(async(root,directory)=>{
+ const cal=await dispatch('calibrate',{root,id:'sample',revision:'v1'}),copy=fs.cp;let edited=false;
+ fs.cp=async function(source,...args){if(!edited&&source===path.join(directory,'candidate')){edited=true;await fs.writeFile(path.join(source,'answer'),'changed during copy');}return copy.call(this,source,...args);};
+ try{await assert.rejects(dispatch('freeze',{root,checkId:cal.checkId}),/Draft changed/);}finally{fs.cp=copy;}
+ await assert.rejects(fs.access(path.join(root,'eval-lab-data/custom-bank/distribution.json')));
+}));

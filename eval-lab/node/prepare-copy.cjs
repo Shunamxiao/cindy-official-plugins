@@ -5,8 +5,9 @@ const inputError=require('./input-error.cjs');
 module.exports=async function(options){
  try{return await prepareCopy(options);}catch(error){if(error.code)throw inputError(error,false,'作答准备');throw error;}
 };
-async function prepareCopy({runDir,workspace,candidate,record,read,write,files,within}){
+async function prepareCopy({runDir,workspace,candidate,expectedHashes,record,read,write,files,within}){
  const planPath=path.join(runDir,'preparation.json'),hashes=await files(candidate);
+ if(Object.keys(hashes).length!==Object.keys(expectedHashes).length||Object.entries(expectedHashes).some(([name,hash])=>hashes[name]!==hash))throw Error('Question package changed during preparation');
  let plan;
  try{plan=await read(planPath);}catch(e){if(e.code!=='ENOENT')throw e;}
  const same=r=>['runId','batchId','bank','question','model','provider','harness','effort','workspace','distributionHash','executionChannel'].every(k=>r[k]===record[k]);

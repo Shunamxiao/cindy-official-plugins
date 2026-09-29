@@ -83,3 +83,10 @@ test('candidate preparation storage failures hide paths and preserve recoverable
   const run=await dispatch('prepare',p);assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
  });
 });
+
+test('preparation rejects bank edits after verification before recording new content',()=>fixture(async p=>{
+ const readdir=fs.readdir,candidate=await fs.realpath(path.join(p.bank,'q/candidate'));let reads=0;
+ fs.readdir=async function(dir,...args){if(dir===candidate&&++reads===2)await fs.writeFile(path.join(candidate,'answer'),'edited after verification');return readdir.call(this,dir,...args);};
+ try{await assert.rejects(dispatch('prepare',p),/Question package changed/);}finally{fs.readdir=readdir;}
+ await assert.rejects(fs.access(path.join(p.root,'eval-lab-data/runs/same-run/run.json')));
+}));
