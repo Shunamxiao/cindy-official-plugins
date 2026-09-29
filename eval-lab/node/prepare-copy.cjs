@@ -1,7 +1,11 @@
 'use strict';
 const {link}=require('./storage.cjs');
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
-module.exports=async function prepareCopy({runDir,workspace,candidate,record,read,write,files,within}){
+const inputError=require('./input-error.cjs');
+module.exports=async function(options){
+ try{return await prepareCopy(options);}catch(error){if(error.code)throw inputError(error,false,'作答准备');throw error;}
+};
+async function prepareCopy({runDir,workspace,candidate,record,read,write,files,within}){
  const planPath=path.join(runDir,'preparation.json'),hashes=await files(candidate);
  let plan;
  try{plan=await read(planPath);}catch(e){if(e.code!=='ENOENT')throw e;}

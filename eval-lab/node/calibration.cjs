@@ -55,15 +55,15 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   // matching by content alone must not hide its completed predecessor.
   const sameSnapshot=matches.filter(x=>JSON.stringify(x.hashes)===JSON.stringify(hashes));
   const latest=sameSnapshot.filter(x=>!children.has(x.checkId));
-  if(latest.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
+  if(p.retryFrom===undefined&&latest.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
   async function admitNewAttempt(previous){
    // Every entry point uses the same predecessor rule. Completed successful
-   // legacy snapshots may coexist; failed/unknown leaves need explicit recovery.
+   // legacy snapshots may coexist. An explicit predecessor selects the chain;
+   // other completed reports stay historical, while unknown attempts still block.
    for(const leaf of matches.filter(x=>!children.has(x.checkId))){
     if(leaf.checkId===previous?.checkId)continue;
     let report;try{report=await read(path.join(home,'calibrations',leaf.checkId,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能重试。');}
-    if(report.ok!==true)throw Error('已有未通过的校准报告，请选择该报告明确重试；不会创建并行校准。');
-    if(previous&&JSON.stringify(leaf.hashes)===JSON.stringify(hashes))throw Error('Calibration identity conflict');
+    if(!previous&&report.ok!==true)throw Error('已有未通过的校准报告，请选择该报告明确重试；不会创建并行校准。');
    }
    await idle(p);
   }

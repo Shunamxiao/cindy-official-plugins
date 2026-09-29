@@ -178,3 +178,16 @@ test('ending authoring requires complete matching receipts, not merely a finishe
  const saved=await fs.readFile(file,'utf8');await fs.writeFile(file,saved.replace('"code": 0','"code": 9'));
  await assert.rejects(dispatch('calibrate_idle',p),/不能结束/);
 }));
+
+test('explicitly selected failed report can retry alongside completed legacy failures',()=>fixture(async(root,directory)=>{
+ const p={root,id:'sample',revision:'v1'},grade=path.join(directory,'author/grade.py'),original=await fs.readFile(grade);
+ await fs.writeFile(grade,"raise RuntimeError('broken')\n");const failed=await dispatch('calibrate',p);
+ const parent=path.join(root,'eval-lab-data/calibrations'),source=path.join(parent,failed.checkId),legacy=path.join(parent,'legacy-failed');
+ await fs.cp(source,legacy,{recursive:true});await fs.appendFile(grade,'# legacy edit\n');
+ const hashes=await require('../node/engine.cjs').files(directory);
+ for(const name of ['plan.json','calibration.json']){const f=path.join(legacy,name),v=JSON.parse(await fs.readFile(f));v.checkId='legacy-failed';v.hashes=hashes;await fs.writeFile(f,JSON.stringify(v));}
+ const old=await fs.readFile(path.join(source,'calibration.json'));
+ await fs.writeFile(grade,original);await assert.rejects(dispatch('calibrate_begin',p),/明确重试/);
+ const retry={...p,retryFrom:'legacy-failed'},result=await dispatch('calibrate',retry);assert.equal(result.ok,true);
+ assert.deepEqual(await dispatch('calibrate',retry),result);assert.deepEqual(await fs.readFile(path.join(source,'calibration.json')),old);
+}));

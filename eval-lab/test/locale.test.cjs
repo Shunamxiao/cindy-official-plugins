@@ -26,7 +26,7 @@ test('browser dates follow Host language with English fallback',async()=>{
  }
 });
 test('dynamic batch messages, parameterized counts and diagnostic prefixes use English fallback',()=>{
- for(const text of ['Worker 实际配置或目录不匹配，未计分','本批已结束；环境受阻的作答不计入正式总分。','宿主正在核对执行结果；不会重复发送，也不会计为零分。','等待自动审批或用户确认']){
+ for(const text of ['单批最多 200 份作答，请分批运行','Worker 实际配置或目录不匹配，未计分','本批已结束；环境受阻的作答不计入正式总分。','宿主正在核对执行结果；不会重复发送，也不会计为零分。','等待自动审批或用户确认']){
   assert.equal(translate('zh-CN',text),text);assert.doesNotMatch(translate('ja',text),/[\u3400-\u9fff]/);
  }
  assert.equal(translate('en','{count} 份同时作答',{count:3}),'3 concurrent answers');

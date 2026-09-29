@@ -75,3 +75,11 @@ test('malformed optional diagnostic directory does not block independent score p
  const result=await dispatch('grade',request);assert.equal(result.score,1);assert.equal(JSON.parse(await fs.readFile(path.join(p.root,'eval-lab-data/runs/same-run/result.json'),'utf8')).environmentDiagnostic,null);assert.equal((await dispatch('grade',request)).score,1);
  assert.equal(await fs.readFile(path.join(p.root,'eval-lab-data/runs/same-run/executions'),'utf8'),'x');
 }));
+
+test('candidate preparation storage failures hide paths and preserve recoverable preparation',async()=>{
+ for(const code of ['ENOSPC','EDQUOT','EACCES','EPERM','EROFS','EIO','ENOENT','UNKNOWN'])await fixture(async p=>{
+  const copy=fs.cp;fs.cp=async()=>{throw Object.assign(Error('copyfile '+p.root+'/private-bank -> '+p.root+'/private-run'),{code});};
+  try{await assert.rejects(dispatch('prepare',p),e=>e.code===code&&!e.message.includes(p.root)&&/作答准备/.test(e.message));}finally{fs.cp=copy;}
+  const run=await dispatch('prepare',p);assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
+ });
+});
