@@ -1,10 +1,7 @@
 'use strict';
 const {link}=require('./storage.cjs');
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
-function inputError(error,cleanup=false){
- const message=cleanup?'校准材料清理未完成，请检查存储权限和连接；已有文件保留，未重新执行。':['ENOSPC','EDQUOT'].includes(error.code)?'校准材料复制失败，请释放磁盘空间后重试。':['EACCES','EPERM','EROFS'].includes(error.code)?'校准材料复制失败，请检查存储读写权限后重试。':'校准材料复制失败，请检查存储连接和材料是否可读后重试。';
- return Object.assign(Error(message),{code:error.code||'CALIBRATION_INPUT_FAILED'});
-}
+const inputError=require('./input-error.cjs');
 const names=['candidate','reference','controls/incomplete'];
 const publicStep=({name,status,scoreExact})=>({name,status,scoreExact});
 module.exports=function calibration({base,within,files,read,write,id,validateSpec,score,runCommand,draftDirectory=async p=>within(await base(p.root),'drafts/'+id(p.id)+'/'+id(p.revision))}){
@@ -14,7 +11,9 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const execution=result?.execution,legacySpawnFailure=result?.status==='environment_invalid'&&execution?.code===null&&typeof execution.error==='string'&&execution.error.length>0&&!Object.hasOwn(execution,'timedOut');
   if(result?.name!==name||(!legacySpawnFailure&&typeof execution?.timedOut!=='boolean')||!(execution.code===null||Number.isInteger(execution.code))||!['graded','environment_invalid'].includes(result.status)||result.raw?.status!==result.status)throw Error('Calibration receipt mismatch');
   if(result.status==='graded'){
-   const calculated=score(spec,result.raw.items);
+   // A predecessor report is checked against its saved receipts, never rescored using an edited draft.
+   const calculated=spec?score(spec,result.raw.items):{value:result.score,exact:result.scoreExact};
+   if(!Number.isFinite(result.score)||result.score<0||result.score>1||typeof result.scoreExact!=='string')throw Error('Calibration receipt mismatch');
    if(result.execution.code!==0||result.execution.timedOut||result.score!==calculated.value||result.scoreExact!==calculated.exact)throw Error('Calibration receipt mismatch');
   }else if(result.score!==null||result.scoreExact!==null)throw Error('Calibration receipt mismatch');
   return result;
@@ -36,42 +35,50 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   for(const entry of await fs.readdir(path.dirname(checks))){
    const folder=await within(home,'calibrations/'+id(entry));let old;
    try{old=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
-   if(old.id===p.id&&old.revision===p.revision&&JSON.stringify(old.hashes)===JSON.stringify(hashes)){
+   if(old.id===p.id&&old.revision===p.revision){
     if(old.checkId!==entry)throw Error('Calibration identity conflict');matches.push(old);
    }
   }
-  const parents=new Set(matches.map(x=>x.retryFrom).filter(Boolean));
-  const latest=matches.filter(x=>!parents.has(x.checkId));
-  if(matches.length&&latest.length!==1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
-  if(matches.length){
-   const visited=new Set();let current=latest[0];
+  const byId=new Map(matches.map(x=>[x.checkId,x])),children=new Map();
+  for(const node of matches){
+   if(node.retryFrom){
+    if(!byId.has(node.retryFrom)||children.has(node.retryFrom))throw Error('Calibration identity conflict');
+    children.set(node.retryFrom,node);
+   }
+   const visited=new Set();let current=node;
    while(current){
     if(visited.has(current.checkId))throw Error('Calibration identity conflict');
-    visited.add(current.checkId);
-    if(!current.retryFrom)break;
-    current=matches.find(x=>x.checkId===current.retryFrom);
-    if(!current)throw Error('Calibration identity conflict');
+    visited.add(current.checkId);current=byId.get(current.retryFrom);
    }
-   if(visited.size!==matches.length)throw Error('Calibration identity conflict');
   }
+  // Independent legacy snapshots remain readable. A retry chain spans hashes;
+  // matching by content alone must not hide its completed predecessor.
+  const sameSnapshot=matches.filter(x=>JSON.stringify(x.hashes)===JSON.stringify(hashes));
+  const latest=sameSnapshot.filter(x=>!children.has(x.checkId));
+  if(latest.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
   if(p.retryFrom!==undefined){
    const previous=matches.find(x=>x.checkId===p.retryFrom);
    if(!previous)throw Error('校准重试与当前草稿不匹配。');
    // One explicitly selected completed report owns exactly one successor.
    // Repeating the same request after a lost reply recovers that successor.
-   const successor=matches.find(x=>x.retryFrom===previous.checkId);
+   const successor=children.get(previous.checkId);
    if(successor)return {checkId:successor.checkId};
-   if(latest[0]?.checkId!==previous.checkId)throw Error('请从最新已结束的校准报告发起重试。');
    let completed;
    try{completed=await read(path.join(home,'calibrations',previous.checkId,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能重试。');}
-   if(completed.checkId!==previous.checkId||completed.ok!==false||!Array.isArray(completed.results)||completed.results.length!==names.length)throw Error('只有已结束且未通过的校准可以重试。');
+   if(completed.checkId!==previous.checkId||completed.id!==previous.id||completed.revision!==previous.revision||JSON.stringify(completed.hashes)!==JSON.stringify(previous.hashes)||completed.ok!==false||!Array.isArray(completed.results)||completed.results.length!==names.length)throw Error('只有已结束且未通过的校准可以重试。');
    for(let i=0;i<names.length;i++){
-    const saved=receipt(await read(path.join(home,'calibrations',previous.checkId,'step-'+i+'.json')),names[i],spec);
+    const saved=receipt(await read(path.join(home,'calibrations',previous.checkId,'step-'+i+'.json')),names[i]);
     if(JSON.stringify(saved)!==JSON.stringify(completed.results[i]))throw Error('Calibration receipt mismatch');
    }
+   await idle(p);
    checkId='retry-'+crypto.createHash('sha256').update(previous.checkId).digest('hex');
    checks=await within(home,'calibrations/'+checkId);plan={checkId,...identity,retryFrom:previous.checkId};
-  }else if(latest.length===1)return {checkId:latest[0].checkId};
+  }else{
+   if(latest.length===1)return {checkId:latest[0].checkId};
+   if(sameSnapshot.length)throw Error('Draft changed; recalibrate');
+   // A changed draft is a new snapshot, but never permission to bypass an unknown attempt.
+   await idle(p);
+  }
   await fs.mkdir(checks,{recursive:true});
   const dest=path.join(checks,'plan.json');
   try{

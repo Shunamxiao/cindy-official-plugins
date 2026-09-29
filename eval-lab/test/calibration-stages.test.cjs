@@ -15,9 +15,21 @@ test('explicit retry retains the failed report and has a stable identity after l
  assert.deepEqual(await fs.readFile(old),bytes);
  await assert.rejects(dispatch('calibrate_begin',{...p,retryFrom:a.checkId}),/retry|重试/);
 }));
+test('retry captures a corrected draft while keeping the failed snapshot and refusing unknown execution',()=>fixture(async(root,directory)=>{
+ const p={root,id:'sample',revision:'v1'},grade=path.join(directory,'author/grade.py'),original=await fs.readFile(grade);
+ await fs.writeFile(grade,"import json,sys,pathlib\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':True}}))\n");
+ const failed=await dispatch('calibrate',p),old=path.join(root,'eval-lab-data/calibrations',failed.checkId,'calibration.json'),bytes=await fs.readFile(old);
+ await fs.writeFile(grade,original.toString().replace("'a':","'b':"));
+ const specFile=path.join(directory,'question.json'),spec=JSON.parse(await fs.readFile(specFile));spec.title='Corrected';spec.groups[0].items=['b'];await fs.writeFile(specFile,JSON.stringify(spec));
+ const retry={...p,retryFrom:failed.checkId},a=await dispatch('calibrate_begin',retry);
+ assert.notEqual(a.checkId,failed.checkId);assert.deepEqual(await dispatch('calibrate_begin',retry),a);assert.deepEqual(await dispatch('calibrate_begin',p),a);
+ assert.equal((await dispatch('calibrate',retry)).ok,true);assert.deepEqual(await fs.readFile(old),bytes);
+ await fs.appendFile(grade,'\n# later edit');assert.deepEqual(await dispatch('calibrate_begin',retry),a);await assert.rejects(dispatch('calibrate',retry),/Draft changed/);
+}));
 test('explicit retry rejects unfinished or unknown calibration executions',()=>fixture(async(root)=>{
  const p={root,id:'sample',revision:'v1'},a=await dispatch('calibrate_begin',p);
  await fs.mkdir(path.join(root,'eval-lab-data/calibrations',a.checkId,'attempt-0'));
+ await fs.appendFile(path.join(root,'eval-lab-data/drafts/sample/v1/author/grade.py'),'\n# changed while unknown');
  await assert.rejects(dispatch('calibrate_begin',{...p,retryFrom:a.checkId}),/retry|重试/);
  assert.equal((await fs.readdir(path.join(root,'eval-lab-data/calibrations'))).length,1);
 }));

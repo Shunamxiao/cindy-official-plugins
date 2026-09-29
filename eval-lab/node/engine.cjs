@@ -2,6 +2,7 @@
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto'),cp=require('node:child_process');
 const {createReadStream}=require('node:fs');
 const {validateStorage,link}=require('./storage.cjs');
+const inputError=require('./input-error.cjs');
 const {sha,id,validateSpec,score,report,publicResult}=require('../lib/core.cjs');
 const read=async p=>JSON.parse(await fs.readFile(p,'utf8'));
 // Immutable JSON becomes visible only after the complete file is closed; never replace a winner.
@@ -94,9 +95,12 @@ async function grade(p){
    await write(path.join(dir,'submission-hashes.json'),await files(snapshot));
   }catch(error){
    // This call has not spawned a grader. Only its newly created preparation may be removed.
-   if(snapshotCreated)await fs.rm(snapshot,{recursive:true,force:true});
-   if(contextWritten)await fs.unlink(contextPath);
-   await fs.unlink(path.join(dir,'grading.lock'));throw error;
+   try{
+    if(snapshotCreated)await fs.rm(snapshot,{recursive:true,force:true});
+    if(contextWritten)await fs.unlink(contextPath);
+    await fs.unlink(path.join(dir,'grading.lock'));
+   }catch(cleanup){throw inputError(cleanup,true,'评分快照');}
+   throw inputError(error,false,'评分快照');
   }
   execution=await runCommand('python3',['-B',path.join(questionDir,'author/grade.py'),snapshot,output]);
   execution={...execution,submissionHashes:await files(snapshot)};

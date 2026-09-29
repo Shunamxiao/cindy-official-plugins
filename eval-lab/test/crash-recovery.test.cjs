@@ -12,8 +12,8 @@ async function fixture(fn){
  }finally{await fs.rm(root,{recursive:true,force:true});}
 }
 async function killAtPublication(method,p,filename){
- const code=`const fs=require('node:fs/promises'),path=require('node:path');const link=fs.link;fs.link=async(a,b)=>{if(path.basename(b)===${JSON.stringify(filename)}){process.send('paused');await new Promise(()=>{});}return link(a,b);};require(${JSON.stringify(path.resolve(__dirname,'../node/engine.cjs'))}).dispatch(${JSON.stringify(method)},${JSON.stringify(p)}).catch(e=>{process.send({error:e.message});process.exit(1)});`;
- const child=cp.spawn(process.execPath,['-e',code],{stdio:['ignore','ignore','pipe','ipc']});
+ const child=cp.fork(path.join(__dirname,'fixtures/crash-child.cjs'),[],{stdio:['ignore','ignore','pipe','ipc']});
+ child.send({method,p,filename});
  const closed=new Promise(resolve=>child.once('close',resolve));let timer;
  try{await new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('Crash point was not reached')),10000);child.once('error',reject);child.once('message',m=>m==='paused'?resolve():reject(Error(JSON.stringify(m))));child.once('exit',()=>reject(Error('Child exited early')));});}
  finally{clearTimeout(timer);child.kill('SIGKILL');await closed;}
@@ -44,6 +44,21 @@ test('unknown grading attempts are never replayed or mistaken for completion',()
 test('a known snapshot copy failure can retry without losing the paid workspace',()=>fixture(async p=>{
  const run=await dispatch('prepare',p),copy=fs.cp;
  const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
- try{fs.cp=async()=>{throw Object.assign(Error('disk full'),{code:'ENOSPC'});};await assert.rejects(dispatch('grade',request),{code:'ENOSPC'});}finally{fs.cp=copy;}
+ try{fs.cp=async()=>{throw Object.assign(Error('copyfile '+p.root+'/private-source -> '+p.root+'/private-output'),{code:'ENOSPC'});};await assert.rejects(dispatch('grade',request),e=>e.code==='ENOSPC'&&!e.message.includes(p.root)&&/释放磁盘/.test(e.message));}finally{fs.cp=copy;}
  assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');assert.equal((await dispatch('grade',request)).score,1);
 }));
+
+test('grading copy and cleanup failures preserve paid files and hide filesystem paths',async()=>{
+ for(const code of ['ENOSPC','EDQUOT','EACCES','EPERM','EROFS','EIO','ENOENT','UNKNOWN'])await fixture(async p=>{
+  const run=await dispatch('prepare',p),copy=fs.cp,request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+  fs.cp=async()=>{throw Object.assign(Error('copyfile '+p.root+'/private-source'),{code});};
+  try{await assert.rejects(dispatch('grade',request),e=>e.code===code&&!e.message.includes(p.root)&&/评分快照复制失败/.test(e.message));}finally{fs.cp=copy;}
+  assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');assert.equal((await dispatch('grade',request)).score,1);
+ });
+ await fixture(async p=>{
+  const run=await dispatch('prepare',p),copy=fs.cp,remove=fs.rm,request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+  fs.cp=async()=>{throw Object.assign(Error(p.root),{code:'EIO'});};fs.rm=async()=>{throw Object.assign(Error(p.root),{code:'EACCES'});};
+  try{await assert.rejects(dispatch('grade',request),e=>e.code==='EACCES'&&!e.message.includes(p.root)&&/清理未完成/.test(e.message));}finally{fs.cp=copy;fs.rm=remove;}
+  await assert.rejects(dispatch('grade',request),/不会重复评分/);assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
+ });
+});
