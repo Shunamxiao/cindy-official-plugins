@@ -5,7 +5,7 @@ const {validateStorage,link}=require('./storage.cjs');
 const inputError=require('./input-error.cjs');
 const {sha,id,validateSpec,score,report,publicResult}=require('../lib/core.cjs');
 const readMetadata=require('./read-metadata.cjs');
-const read=async p=>['distribution.json','question.json'].includes(path.basename(p))?readMetadata(p):JSON.parse(await fs.readFile(p,'utf8'));
+const read=async(p,expectedHash)=>['distribution.json','question.json'].includes(path.basename(p))?readMetadata(p,expectedHash):JSON.parse(await fs.readFile(p,'utf8'));
 // Immutable JSON becomes visible only after the complete file is closed; never replace a winner.
 const write=async(p,x)=>{
  await fs.mkdir(path.dirname(p),{recursive:true});
@@ -17,7 +17,7 @@ async function within(root,rel){if(typeof rel!=='string'||rel.includes('\\')||pa
 async function files(root,dir='',signal){signal?.throwIfAborted();const rows={};for(const e of (await fs.readdir(path.join(root,dir),{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){signal?.throwIfAborted();const rel=dir?dir+'/'+e.name:e.name;if(e.isSymbolicLink())throw Object.assign(Error('Symlink refused'),{code:'SYMLINK_REFUSED'});if(e.isDirectory())Object.assign(rows,await files(root,rel,signal));else if(e.isFile()){const hash=crypto.createHash('sha256');for await(const chunk of createReadStream(path.join(root,rel),{signal}))hash.update(chunk);rows[rel]=hash.digest('hex');}}return rows;}
 async function base(root){if(!path.isAbsolute(root))throw Error('Choose an absolute storage directory');root=await fs.realpath(root);const out=await within(root,'eval-lab-data');await fs.mkdir(out,{recursive:true});return out;}
 async function bankInfo(bank){const root=await fs.realpath(bank);const manifest=await read(path.join(root,'distribution.json'));if(!manifest||manifest.format!=='eval-lab-bank-v1')throw Error('Not an Eval Lab bank');return {root,manifest};}
-async function verifyQuestion(bank,key){const {root,manifest}=await bankInfo(bank);const q=manifest.questions.find(q=>q.key===key);if(!q)throw Error('Question not found');const dir=await within(root,q.path);const actual=await files(dir);if(Object.keys(actual).length!==Object.keys(q.files).length)throw Error('Question package has unregistered or missing files');for(const [rel,h] of Object.entries(q.files)){if(actual[rel]!==h)throw Error('Question package changed: '+rel);}const spec=await read(path.join(dir,'question.json'));validateSpec(spec);if(q.key!==spec.id+'@'+spec.revision||(q.revision!==undefined&&q.revision!==spec.revision))throw Error('Question identity mismatch');return {q,dir,spec};}
+async function verifyQuestion(bank,key){const {root,manifest}=await bankInfo(bank);const q=manifest.questions.find(q=>q.key===key);if(!q)throw Error('Question not found');const dir=await within(root,q.path);const actual=await files(dir);if(Object.keys(actual).length!==Object.keys(q.files).length)throw Error('Question package has unregistered or missing files');for(const [rel,h] of Object.entries(q.files)){if(actual[rel]!==h)throw Error('Question package changed: '+rel);}const spec=await read(path.join(dir,'question.json'),q.files['question.json']||'');validateSpec(spec);if(q.key!==spec.id+'@'+spec.revision||(q.revision!==undefined&&q.revision!==spec.revision))throw Error('Question identity mismatch');return {q,dir,spec};}
 async function runCommand(command,args,{cwd,timeout=840000,signal,input}={}){
  signal?.throwIfAborted();
  return new Promise(resolve=>{
@@ -151,7 +151,7 @@ async function freezeUnlocked(p){
  const staging=await fs.mkdtemp(path.join(bank,'staging-'));let published=false,confirmed=false;
  try{
   for(const f of ['candidate','reference','author'])await fs.cp(path.join(dir,f),path.join(staging,f),{recursive:true,errorOnExist:true,force:false});await fs.copyFile(path.join(dir,'question.json'),path.join(staging,'question.json'));
-  const spec=await read(path.join(staging,'question.json')),hashes=await files(staging),hash=sha(JSON.stringify(hashes));
+  const hashes=await files(staging),spec=await read(path.join(staging,'question.json'),hashes['question.json']||''),hash=sha(JSON.stringify(hashes));
   if(Object.keys(hashes).length!==Object.keys(expected).length||Object.entries(expected).some(([name,hash])=>hashes[name]!==hash))throw Error('Draft changed; recalibrate');
   const rel='questions/'+cal.id+'/'+cal.revision+'-'+hash.slice(0,16),dest=await within(bank,rel);await fs.mkdir(path.dirname(dest),{recursive:true});
   try{await fs.rename(staging,dest);published=true;}catch(e){if(!['EEXIST','ENOTEMPTY'].includes(e.code))throw e;if(JSON.stringify(await files(dest))!==JSON.stringify(hashes))throw Error('Unregistered release conflicts');}

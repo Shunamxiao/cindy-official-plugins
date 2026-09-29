@@ -53,7 +53,7 @@ function service({base,within,files,runCommand,fetchFile=download,platform=proce
  const operations=new Map();
  const staged=require('./install-steps.cjs')({home,within,validate,checkPlatform,verifySpec,platform,arch,stepBytes});
  async function verifySpec(dir,q){
-  let spec;try{spec=await readMetadata(path.join(dir,'question.json'));validateSpec(spec);if(q.key!==spec.id+'@'+spec.revision||q.revision!==spec.revision)throw Error('Question identity mismatch');}
+  let spec;try{spec=await readMetadata(path.join(dir,'question.json'),q.files['question.json']||'');validateSpec(spec);if(q.key!==spec.id+'@'+spec.revision||q.revision!==spec.revision)throw Error('Question identity mismatch');}
   catch(e){if(e.code&&!['ENOENT','PACKAGE_INVALID'].includes(e.code))throw e;throw Object.assign(Error('Invalid question specification'),{code:'PACKAGE_INVALID'});}
   checkPlatform(spec.environment,platform,arch);
  }

@@ -17,10 +17,11 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
  }
  async function begin(p){
   const home=await base(p.root),dir=await draftDirectory(p);
-  const spec=await read(path.join(dir,'question.json'));validateSpec(spec);
+  const hashes=await files(dir);
+  const spec=await read(path.join(dir,'question.json'),hashes['question.json']||'');validateSpec(spec);
   if(spec.id!==p.id||spec.revision!==p.revision)throw Error('Question identity mismatch');
   for(const name of [...names,'author'])if(!(await fs.stat(path.join(dir,name))).isDirectory())throw Error('Missing '+name);
-  const hashes=await files(dir),identity={id:p.id,revision:p.revision,hashes};
+  const identity={id:p.id,revision:p.revision,hashes};
   // The draft snapshot owns the ID, so a lost begin/step response cannot create
   // another execution of the same unknown attempt on the next request.
   let checkId='snapshot-'+crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
@@ -91,7 +92,7 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const home=await base(p.root),checks=await within(home,'calibrations/'+id(p.checkId)),plan=await read(path.join(checks,'plan.json'));
   const dir=await draftDirectory({...p,id:plan.id,revision:plan.revision});
   if(JSON.stringify(plan.hashes)!==JSON.stringify(await files(dir)))throw Error('Draft changed; recalibrate');
-  const spec=await read(path.join(dir,'question.json'));validateSpec(spec);
+  const spec=await read(path.join(dir,'question.json'),plan.hashes['question.json']||'');validateSpec(spec);
   return {checks,plan,dir,spec};
  }
  async function step(p){

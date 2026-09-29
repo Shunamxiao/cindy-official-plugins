@@ -1,9 +1,9 @@
 'use strict';
-const fs=require('node:fs/promises');
+const fs=require('node:fs/promises'),crypto=require('node:crypto');
 // Match the online index budget; archive/workspace limits do not apply to JSON metadata.
 const limit=16*1024*1024;
 const invalid=()=>Object.assign(Error('Question metadata exceeds 16 MiB; reduce the metadata file.'),{code:'PACKAGE_INVALID'});
-module.exports=async function readMetadata(file){
+module.exports=async function readMetadata(file,expectedHash){
  const handle=await fs.open(file,'r');
  try{
   if((await handle.stat()).size>limit)throw invalid();
@@ -14,6 +14,8 @@ module.exports=async function readMetadata(file){
    if(!bytesRead)break;
    size+=bytesRead;if(size>limit)throw invalid();chunks.push(buffer.subarray(0,bytesRead));
   }
-  return JSON.parse(Buffer.concat(chunks,size).toString('utf8'));
+  const bytes=Buffer.concat(chunks,size);
+  if(expectedHash!==undefined&&crypto.createHash('sha256').update(bytes).digest('hex')!==expectedHash)throw Object.assign(Error('Question package changed: question.json; restore the registered version and retry.'),{code:'PACKAGE_INVALID'});
+  return JSON.parse(bytes.toString('utf8'));
  }finally{await handle.close();}
 };

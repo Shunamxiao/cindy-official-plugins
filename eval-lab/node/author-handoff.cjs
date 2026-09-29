@@ -30,7 +30,7 @@ module.exports=({base,within,files,read,write,id,validateSpec})=>{
    await regularTree(source);await files(source);
    for(const name of outputs)await fs.cp(await within(source,name),path.join(tmp,name),{recursive:true,errorOnExist:true,force:false});
    for(const name of inputs)await fs.copyFile(await within(d,name),path.join(tmp,name));
-   const hashes=await files(tmp),spec=await read(path.join(tmp,'question.json'));validateSpec(spec);
+   const hashes=await files(tmp),spec=await read(path.join(tmp,'question.json'),hashes['question.json']||'');validateSpec(spec);
    if(spec.id!==p.id||spec.revision!==p.revision)throw Error('Question identity mismatch');
    for(const name of ['candidate','reference','author','controls/incomplete'])if(!(await fs.stat(await within(tmp,name))).isDirectory())throw Error('Missing '+name);
    // Reject an inconsistent copy if the task's output changed during handoff.

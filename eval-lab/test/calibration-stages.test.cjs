@@ -1,5 +1,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch}=require('../node/engine.cjs');
+test('calibration rejects a scoring spec replaced after plan hash verification',()=>fixture(async(root,directory)=>{
+ const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),file=path.join(directory,'question.json'),original=await fs.readFile(file),open=fs.open;
+ const p={root,checkId,step:0};
+ try{
+  fs.open=async function(target,...args){if(String(target)===file){const spec=JSON.parse(original);spec.groups[0].items=['b'];await fs.writeFile(file,JSON.stringify(spec));}return open.call(this,target,...args);};
+  await assert.rejects(dispatch('calibrate_step',p),/Question package changed/);
+  await assert.rejects(fs.access(path.join(root,'eval-lab-data/calibrations',checkId,'attempt-0')),{code:'ENOENT'});
+  fs.open=open;await fs.writeFile(file,original);assert.equal((await dispatch('calibrate_step',p)).scoreExact,'0');
+ }finally{fs.open=open;}
+}));
 test('explicit retry retains the failed report and has a stable identity after lost replies',()=>fixture(async(root)=>{
  const p={root,id:'sample',revision:'v1'},child=require('node:child_process'),spawn=child.spawn;
  child.spawn=(command,args,options)=>spawn(path.join(root,'missing-python'),args,options);

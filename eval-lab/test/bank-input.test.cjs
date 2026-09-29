@@ -1,5 +1,16 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch,files,within}=require('../node/engine.cjs');
+test('metadata parses the verified bytes and closes its handle on hash mismatch',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-metadata-hash-')),file=path.join(root,'question.json'),open=fs.open,read=require('../node/read-metadata.cjs'),crypto=require('node:crypto');
+ const bytes=Buffer.from(JSON.stringify({title:'题目 😀'})),hash=crypto.createHash('sha256').update(bytes).digest('hex');let closed=0;
+ try{
+  await fs.writeFile(file,bytes);
+  fs.open=async(...args)=>{const handle=await open(...args),close=handle.close.bind(handle);handle.close=async()=>{closed++;await close();await fs.writeFile(file,'{}');};return handle;};
+  assert.deepEqual(await read(file,hash),{title:'题目 😀'});assert.equal(closed,1);
+  await assert.rejects(read(file,hash),{code:'PACKAGE_INVALID'});assert.equal(closed,2);
+  await assert.rejects(read(file,''),{code:'PACKAGE_INVALID'});assert.equal(closed,3);
+ }finally{fs.open=open;await fs.rm(root,{recursive:true,force:true});}
+});
 for(const name of ['distribution.json','question.json'])test('oversized '+name+' is rejected before a whole-file read',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-bank-input-')),bank=path.join(root,'bank'),q=path.join(bank,'q'),readFile=fs.readFile;
  try{

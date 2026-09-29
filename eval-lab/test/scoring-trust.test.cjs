@@ -1,6 +1,24 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch,files}=require('../node/engine.cjs');
 const {checkPlatform}=require('../node/question-platform.cjs');
+test('grading rejects a replacement scoring spec after package verification',async()=>{
+ const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'eval-spec-version-'))),open=fs.open;
+ try{
+  const bank=path.join(root,'bank'),q=path.join(bank,'q'),file=path.join(q,'question.json');
+  await fs.mkdir(path.join(q,'candidate'),{recursive:true});await fs.mkdir(path.join(q,'author'));
+  await fs.writeFile(path.join(q,'candidate/TASK.md'),'Saved answer');
+  const spec={id:'q',revision:'v1',title:'Q',scoringVersion:'v1',groups:[{id:'g',weight:'1',mode:'all',items:['a']}]},original=JSON.stringify(spec);
+  await fs.writeFile(file,original);
+  await fs.writeFile(path.join(q,'author/grade.py'),"import json,sys,pathlib\npathlib.Path(sys.argv[2]).write_text(json.dumps({'status':'graded','items':{'a':False}}))\n");
+  await fs.writeFile(path.join(bank,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',questions:[{key:'q@v1',path:'q',files:await files(q)}]}));
+  const r=await dispatch('prepare',{root,bank,question:'q@v1',model:'fixture',provider:'fixture',harness:'fixture',effort:'default'}),before=await files(r.workspace),p={root,runId:r.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:2000}};
+  fs.open=async function(target,...args){if(String(target)===file){spec.groups[0].items=['b'];await fs.writeFile(file,JSON.stringify(spec));}return open.call(this,target,...args);};
+  await assert.rejects(dispatch('grade',p),/Question package changed/);
+  await assert.rejects(fs.access(path.join(path.dirname(r.workspace),'grader-execution.json')),{code:'ENOENT'});
+  assert.deepEqual(await files(r.workspace),before);
+  fs.open=open;await fs.writeFile(file,original);assert.equal((await dispatch('grade',p)).score,0);
+ }finally{fs.open=open;await fs.rm(root,{recursive:true,force:true});}
+});
 test('only explicitly restricted questions require the default platform',()=>{
  assert.throws(()=>checkPlatform('macOS arm64 bundled Node','linux','x64'));
  checkPlatform('portable Python 3','linux','x64');checkPlatform(undefined,'win32','x64');checkPlatform('macOS arm64 bundled Node','darwin','arm64');
