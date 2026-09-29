@@ -56,6 +56,17 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const sameSnapshot=matches.filter(x=>JSON.stringify(x.hashes)===JSON.stringify(hashes));
   const latest=sameSnapshot.filter(x=>!children.has(x.checkId));
   if(latest.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
+  async function admitNewAttempt(previous){
+   // Every entry point uses the same predecessor rule. Completed successful
+   // legacy snapshots may coexist; failed/unknown leaves need explicit recovery.
+   for(const leaf of matches.filter(x=>!children.has(x.checkId))){
+    if(leaf.checkId===previous?.checkId)continue;
+    let report;try{report=await read(path.join(home,'calibrations',leaf.checkId,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能重试。');}
+    if(report.ok!==true)throw Error('已有未通过的校准报告，请选择该报告明确重试；不会创建并行校准。');
+    if(previous&&JSON.stringify(leaf.hashes)===JSON.stringify(hashes))throw Error('Calibration identity conflict');
+   }
+   await idle(p);
+  }
   if(p.retryFrom!==undefined){
    const previous=matches.find(x=>x.checkId===p.retryFrom);
    if(!previous)throw Error('校准重试与当前草稿不匹配。');
@@ -70,14 +81,14 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
     const saved=receipt(await read(path.join(home,'calibrations',previous.checkId,'step-'+i+'.json')),names[i]);
     if(JSON.stringify(saved)!==JSON.stringify(completed.results[i]))throw Error('Calibration receipt mismatch');
    }
-   await idle(p);
+   await admitNewAttempt(previous);
    checkId='retry-'+crypto.createHash('sha256').update(previous.checkId).digest('hex');
    checks=await within(home,'calibrations/'+checkId);plan={checkId,...identity,retryFrom:previous.checkId};
   }else{
    if(latest.length===1)return {checkId:latest[0].checkId};
    if(sameSnapshot.length)throw Error('Draft changed; recalibrate');
-   // A changed draft is a new snapshot, but never permission to bypass an unknown attempt.
-   await idle(p);
+   // Changed successful drafts remain compatible; failed drafts require explicit retry.
+   await admitNewAttempt();
   }
   await fs.mkdir(checks,{recursive:true});
   const dest=path.join(checks,'plan.json');

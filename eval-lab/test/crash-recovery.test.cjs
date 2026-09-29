@@ -62,3 +62,16 @@ test('grading copy and cleanup failures preserve paid files and hide filesystem 
   await assert.rejects(dispatch('grade',request),/不会重复评分/);assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
  });
 });
+
+test('symlink refusal tells the user what to fix without exposing paths',()=>fixture(async p=>{
+ const run=await dispatch('prepare',p);await fs.symlink(path.join(run.workspace,'answer'),path.join(run.workspace,'private-link'));
+ const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+ await assert.rejects(dispatch('grade',request),e=>/符号链接/.test(e.message)&&!e.message.includes(p.root)&&!e.message.includes('private-link'));
+ assert.equal(await fs.readFile(path.join(run.workspace,'answer'),'utf8'),'paid answer');
+}));
+test('malformed optional diagnostic directory does not block independent score publication',()=>fixture(async p=>{
+ const run=await dispatch('prepare',p);await fs.mkdir(path.join(run.workspace,'tests'));await fs.writeFile(path.join(run.workspace,'tests/environment-preflight'),'candidate file');
+ const request={root:p.root,runId:run.runId,receipt:{channel:'Orca Worker',sessionId:'fixture',completedAt:new Date().toISOString()}};
+ const result=await dispatch('grade',request);assert.equal(result.score,1);assert.equal(JSON.parse(await fs.readFile(path.join(p.root,'eval-lab-data/runs/same-run/result.json'),'utf8')).environmentDiagnostic,null);assert.equal((await dispatch('grade',request)).score,1);
+ assert.equal(await fs.readFile(path.join(p.root,'eval-lab-data/runs/same-run/executions'),'utf8'),'x');
+}));

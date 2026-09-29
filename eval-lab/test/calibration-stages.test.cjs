@@ -21,6 +21,8 @@ test('retry captures a corrected draft while keeping the failed snapshot and ref
  const failed=await dispatch('calibrate',p),old=path.join(root,'eval-lab-data/calibrations',failed.checkId,'calibration.json'),bytes=await fs.readFile(old);
  await fs.writeFile(grade,original.toString().replace("'a':","'b':"));
  const specFile=path.join(directory,'question.json'),spec=JSON.parse(await fs.readFile(specFile));spec.title='Corrected';spec.groups[0].items=['b'];await fs.writeFile(specFile,JSON.stringify(spec));
+ await assert.rejects(dispatch('calibrate_begin',p),/明确重试/);
+ assert.equal((await fs.readdir(path.join(root,'eval-lab-data/calibrations'))).length,1);
  const retry={...p,retryFrom:failed.checkId},a=await dispatch('calibrate_begin',retry);
  assert.notEqual(a.checkId,failed.checkId);assert.deepEqual(await dispatch('calibrate_begin',retry),a);assert.deepEqual(await dispatch('calibrate_begin',p),a);
  assert.equal((await dispatch('calibrate',retry)).ok,true);assert.deepEqual(await fs.readFile(old),bytes);

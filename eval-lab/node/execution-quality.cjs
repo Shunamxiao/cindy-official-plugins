@@ -8,6 +8,9 @@ function timing(receipt,gradingStartedAt,gradingEndedAt){
 }
 // Worker-writable diagnostic only. Matching harness bytes does not authenticate a receipt.
 async function environmentEvidence(workspace,candidate){
+ try{return await readEnvironmentEvidence(workspace,candidate);}catch{return null;}
+}
+async function readEnvironmentEvidence(workspace,candidate){
  const dir=path.join(workspace,'tests/environment-preflight');let names;
  try{names=await fs.readdir(dir);}catch(e){if(e.code==='ENOENT')return null;throw e;}
  const receipts=[];

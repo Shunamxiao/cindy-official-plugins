@@ -14,3 +14,15 @@ test('numeric timestamps and missing actual prices remain truthful',()=>{
  assert.equal(timing({completedAt:5000}).durationSeconds,null);
  assert.equal(timing({usage:{costUSD:0.25,approximate:true}}).costBasis,'host-session-estimate');
 });
+
+test('optional diagnostics cannot throw on malformed directories or disappearing receipts',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-quality-bad-')),target=path.join(root,'tests/environment-preflight');
+ try{
+  await fs.mkdir(path.dirname(target),{recursive:true});await fs.writeFile(target,'candidate file');assert.equal(await environmentEvidence(root,root),null);
+  await fs.unlink(target);await fs.mkdir(target);await fs.writeFile(path.join(target,'receipt-a.json'),'{}');
+  const stat=fs.lstat;fs.lstat=async p=>{if(p===path.join(target,'receipt-a.json'))throw Object.assign(Error('gone'),{code:'ENOENT'});return stat(p);};
+  try{assert.equal(await environmentEvidence(root,root),null);}finally{fs.lstat=stat;}
+  const read=fs.readdir;fs.readdir=async()=>{throw Object.assign(Error('unreadable'),{code:'EACCES'});};
+  try{assert.equal(await environmentEvidence(root,root),null);}finally{fs.readdir=read;}
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

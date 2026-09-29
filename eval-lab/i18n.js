@@ -13,6 +13,8 @@ const english={
 '评分快照复制失败，请释放磁盘空间后重试。':'Grading snapshots could not be copied. Free disk space and retry.',
 '评分快照复制失败，请检查存储读写权限后重试。':'Grading snapshots could not be copied. Check storage read and write permissions and retry.',
 '评分快照复制失败，请检查存储连接和材料是否可读后重试。':'Grading snapshots could not be copied. Check storage connectivity and that the inputs are readable, then retry.',
+'材料包含符号链接，请改用普通文件后重试；已有作答保留。':'The inputs contain symbolic links. Use regular files and retry. Existing answers are preserved.',
+'已有未通过的校准报告，请选择该报告明确重试；不会创建并行校准。':'A failed calibration report already exists. Select it to retry explicitly; a parallel calibration will not be created.',
 '来源':'Source',
 '下载已取消':'Download cancelled',
 '未关联题库':'Unlinked bank',
