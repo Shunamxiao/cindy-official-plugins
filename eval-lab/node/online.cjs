@@ -48,8 +48,9 @@ function installError(e){
  else if(['ENOSPC','EACCES','EPERM'].includes(e.code)){code='STORAGE_UNAVAILABLE';message='题库无法写入，请检查可用磁盘空间和插件存储权限后重试。';}
  return Object.assign(Error(message),{code});
 }
-function service({base,within,files,runCommand,fetchFile=download,platform=process.platform,arch=process.arch}){
+function service({base,within,files,runCommand,fetchFile=download,platform=process.platform,arch=process.arch,stepBytes}){
  const operations=new Map();
+ const staged=require('./install-steps.cjs')({home,within,validate,checkPlatform,verifySpec,platform,arch,stepBytes});
  async function verifySpec(dir,q){
   let spec;try{spec=JSON.parse(await fs.readFile(path.join(dir,'question.json'),'utf8'));validateSpec(spec);if(q.key!==spec.id+'@'+spec.revision||q.revision!==spec.revision)throw Error('Question identity mismatch');}
   catch(e){if(e.code&&!['ENOENT','PACKAGE_INVALID'].includes(e.code))throw e;throw Object.assign(Error('Invalid question specification'),{code:'PACKAGE_INVALID'});}
@@ -67,6 +68,7 @@ function service({base,within,files,runCommand,fetchFile=download,platform=proce
   if(!op)return {ok:true};
   if(op.root!==p.root)throw Error('Install owner changed');
   op.controller.abort(Error('下载已取消'));
+  if(op.stepped){await op.extractor?.stop();if(op.busy)await op.busy.catch(()=>{});await staged.cleanup(op);operations.delete(p.operationId);return {ok:true};}
   if(op.done)await op.done.catch(e=>{if(e.name!=='AbortError'&&e.message!=='下载已取消')throw e;});
   operations.delete(p.operationId);return {ok:true};
  }
@@ -77,6 +79,18 @@ function service({base,within,files,runCommand,fetchFile=download,platform=proce
   if(op.done)throw Error('Install already started');
   op.done=installFiles({...p,signal:op.controller.signal}).catch(e=>{throw installError(e);}).finally(()=>operations.delete(p.operationId));
   return op.done;
+ }
+ async function step(p){
+  const op=operations.get(p.operationId);
+  if(!op||op.root!==p.root)throw Error('下载已取消');
+  if(op.busy||op.done)throw Error('题库正在安装，请等待当前操作完成后重试。');
+  const identity=JSON.stringify([p.indexId,p.question]);
+  if(op.identity&&op.identity!==identity)throw Error('Install owner changed');
+  if(op.completed)return op.completed;
+  if([...operations.values()].some(x=>x!==op&&x.root===p.root&&x.identity===identity))throw Error('题库正在安装，请等待当前操作完成后重试。');
+  op.stepped=true;
+  op.busy=staged.step(op,p).catch(e=>{if(op.controller.signal.aborted)throw Error('下载已取消');throw installError(e);});
+  try{const result=await op.busy;if(result.done)op.completed=result;return result;}finally{op.busy=null;}
  }
 
  async function home(root){const h=await base(root),d=await within(h,'online');await fs.mkdir(d,{recursive:true});return d;}
@@ -112,6 +126,6 @@ function service({base,within,files,runCommand,fetchFile=download,platform=proce
  const staging=await fs.mkdtemp(path.join(h,'staging-'));try{const target=path.join(staging,q.path);await fs.mkdir(target,{recursive:true});for(const l of q.layers){signal?.throwIfAborted();const a=index.artifacts[l.artifact],cache=p.hostArtifacts?p.hostArtifacts[a.sha256]:await within(h,'artifacts/'+a.sha256+'.zip');if(p.hostArtifacts){if(typeof cache!=='string'||(await fs.stat(cache)).size!==a.bytes||await fileHash(cache,signal)!==a.sha256)throw Error('Host artifact integrity failure');}if(!p.hostArtifacts){await fs.mkdir(path.dirname(cache),{recursive:true});await once(cache,async()=>{try{if((await fs.stat(cache)).size===a.bytes&&await fileHash(cache,signal)===a.sha256)return;}catch(e){if(e.code!=='ENOENT')throw e;}const temp=cache+'.'+crypto.randomUUID()+'.part';try{await fetchFile(a.url,temp,a.bytes,a);if(await fileHash(temp,signal)!==a.sha256||(await fs.stat(temp)).size!==a.bytes)throw Error('Artifact integrity failure');await fs.rename(temp,cache);}finally{await fs.rm(temp,{force:true});}});}const unpack=await runCommand('python3',[path.join(__dirname,'unpack.py'),cache,path.join(target,l.mount),String(a.expandedBytes)],{timeout:unpackTimeout(a.expandedBytes),signal});signal?.throwIfAborted();if(unpack.timedOut)throw Object.assign(Error('Extraction timed out'),{code:'EXTRACTION_TIMEOUT'});if(unpack.code!==0)throw Error('题库解压失败: '+(unpack.stderr||unpack.error));}
  signal?.throwIfAborted();const actual=await files(target,'',signal);signal?.throwIfAborted();if(Object.keys(actual).length!==Object.keys(q.files).length||Object.entries(q.files).some(([f,h])=>actual[f]!==h))throw Error('Question content mismatch');await verifySpec(target,q);await fs.writeFile(path.join(staging,'distribution.json'),JSON.stringify({format:'eval-lab-bank-v1',platform:index.platform,suite:index.suite,online:{indexId:p.indexId,url:saved.url},questions:[q]}));await fs.mkdir(path.dirname(dest),{recursive:true});signal?.throwIfAborted();let backup;try{await fs.lstat(dest);const folder=await within(h,'backups');await fs.mkdir(folder,{recursive:true});const saved=path.join(folder,release+'-'+crypto.randomUUID());signal?.throwIfAborted();await fs.rename(dest,saved);backup=saved;}catch(e){if(e.code!=='ENOENT')throw e;}try{signal?.throwIfAborted();await fs.rename(staging,dest);}catch(e){if(backup)await fs.rename(backup,dest);throw e;}return result;}finally{await fs.rm(staging,{recursive:true,force:true});}});}
  async function banks(p){const h=await home(p.root);let names;try{names=await fs.readdir(path.join(h,'banks'));}catch(e){if(e.code==='ENOENT')return [];throw e;}return names.filter(n=>/^[a-f0-9]{64}$/.test(n)).map(n=>({id:n,path:path.join(h,'banks',n)}));}
- return {inspect,cached,plan,begin,cancel,install,banks};
+ return {inspect,cached,plan,begin,cancel,install,step,banks};
 }
 module.exports={unpackTimeout,service,validate,source,download,downloadError};

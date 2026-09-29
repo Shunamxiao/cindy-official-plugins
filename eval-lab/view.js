@@ -85,6 +85,7 @@ async function refresh(){if(refreshing)return;refreshing=true;try{const s=await 
  const selectedCheckId=$('#check-id').value;$('#check-id').innerHTML=state.drafts.map(d=>`<option value="${esc(d.checkId)}" ${d.passed?'':'disabled'}>${esc(d.id)} · ${esc(d.revision)} ${d.passed?'✓':tr('校准未通过')}</option>`).join('');$('#freeze-section').hidden=!state.drafts.length;$('#freeze').disabled=!state.drafts.some(d=>d.passed);const passed=state.drafts.find(d=>d.passed&&d.checkId===selectedCheckId)||state.drafts.find(d=>d.passed);$('#check-id').value=passed?.checkId||'';
  $('#sync-state').textContent=tr('进度自动更新');
  $('#resume-author').hidden=!state.author?.canResume;
+ $('#retry-calibration').hidden=!state.author?.canRetry;$('#end-author').hidden=!state.author?.canEnd;
  if(state.author?.error)message(tr('出题未完成，请查看出题任务并检查草稿；已有成绩保留。')+' '+tr(state.author.error));
  }finally{refreshing=false;}}
 function renderBankSelector(){$('#bank').innerHTML=state.banks.map(b=>`<option value="${esc(b.id)}">${esc(b.name)}</option>`).join('')+`<option value="create">＋ ${tr('创建自己的题库')}</option>`;$('#bank').value=bankId;}
@@ -107,6 +108,10 @@ bind('#job',async()=>{state.job=await rpc('resume_coordination');renderJob();awa
 bind('#cancel-preparation',async()=>{state.job=await rpc('cancel');renderJob();message('已收到停止请求。');});
 bind('#cancel',async()=>{state.job=await rpc('cancel');renderJob();await refresh();});
 bind('#resume-author',async()=>{await rpc('author');await refresh();});
+bind('#retry-calibration',async()=>{const a=state.author;await rpc('retry_calibration',{id:a.id,revision:a.revision,checkId:a.checkId});await refresh();});
+let endingAuthor;
+bind('#end-author',async()=>{endingAuthor={id:state.author.id,revision:state.author.revision};$('#end-author-dialog').showModal();});
+bind('#confirm-end-author',async()=>{await rpc('end_author',endingAuthor);$('#end-author-dialog').close();await refresh();});
 bind('#create-bank',async()=>{if(!$('#bank-name').value.trim()||!$('#source').value.trim())throw Error('请填写名称与选定的任务记录');await rpc('author',{name:$('#bank-name').value.trim(),records:[{sessionId:'user-selected-excerpts',text:'题库名称：'+$('#bank-name').value+'\n'+$('#source').value}]});$('#author-dialog').close();message('正在整理题目，完成后会出现在待加入列表。');});
 bind('#freeze',async()=>{const r=await rpc('freeze',{checkId:$('#check-id').value});bankId=r.key;await refresh();message('新版本已加入本地题库。');});
 bind('#export',async()=>{const runIds=[...new Set(standingsRows.flatMap(r=>r.details.flatMap(d=>d.records.map(x=>x.runId))))];const r=await rpc('export',{runIds,standings:{title:state.banks.find(b=>b.id===historyBankId)?.name||(historySourceNumber?tr('未关联题库')+' '+historySourceNumber:tr('模型成绩')),mode:scoreMode,questions:standingsQuestions}});message(r.saved?'网页已导出。':'已取消另存，报告仍保留在本地作品库。');});

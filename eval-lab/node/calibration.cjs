@@ -1,4 +1,5 @@
 'use strict';
+const {link}=require('./storage.cjs');
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
 function inputError(error,cleanup=false){
  const message=cleanup?'校准材料清理未完成，请检查存储权限和连接；已有文件保留，未重新执行。':['ENOSPC','EDQUOT'].includes(error.code)?'校准材料复制失败，请释放磁盘空间后重试。':['EACCES','EPERM','EROFS'].includes(error.code)?'校准材料复制失败，请检查存储读写权限后重试。':'校准材料复制失败，请检查存储连接和材料是否可读后重试。';
@@ -26,8 +27,8 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const hashes=await files(dir),identity={id:p.id,revision:p.revision,hashes};
   // The draft snapshot owns the ID, so a lost begin/step response cannot create
   // another execution of the same unknown attempt on the next request.
-  const checkId='snapshot-'+crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
-  const checks=await within(home,'calibrations/'+checkId),plan={checkId,...identity};
+  let checkId='snapshot-'+crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  let checks=await within(home,'calibrations/'+checkId),plan={checkId,...identity};
   await fs.mkdir(path.dirname(checks),{recursive:true});
   // Earlier builds used random IDs. Reuse their recorded snapshot as well;
   // otherwise an upgrade could replay an already-running legacy attempt.
@@ -36,11 +37,41 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
    const folder=await within(home,'calibrations/'+id(entry));let old;
    try{old=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
    if(old.id===p.id&&old.revision===p.revision&&JSON.stringify(old.hashes)===JSON.stringify(hashes)){
-    if(old.checkId!==entry)throw Error('Calibration identity conflict');matches.push(entry);
+    if(old.checkId!==entry)throw Error('Calibration identity conflict');matches.push(old);
    }
   }
-  if(matches.length>1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
-  if(matches.length===1)return {checkId:matches[0]};
+  const parents=new Set(matches.map(x=>x.retryFrom).filter(Boolean));
+  const latest=matches.filter(x=>!parents.has(x.checkId));
+  if(matches.length&&latest.length!==1)throw Error('同一草稿存在多个校准记录，请先核对原执行状态；不会重复执行评分。');
+  if(matches.length){
+   const visited=new Set();let current=latest[0];
+   while(current){
+    if(visited.has(current.checkId))throw Error('Calibration identity conflict');
+    visited.add(current.checkId);
+    if(!current.retryFrom)break;
+    current=matches.find(x=>x.checkId===current.retryFrom);
+    if(!current)throw Error('Calibration identity conflict');
+   }
+   if(visited.size!==matches.length)throw Error('Calibration identity conflict');
+  }
+  if(p.retryFrom!==undefined){
+   const previous=matches.find(x=>x.checkId===p.retryFrom);
+   if(!previous)throw Error('校准重试与当前草稿不匹配。');
+   // One explicitly selected completed report owns exactly one successor.
+   // Repeating the same request after a lost reply recovers that successor.
+   const successor=matches.find(x=>x.retryFrom===previous.checkId);
+   if(successor)return {checkId:successor.checkId};
+   if(latest[0]?.checkId!==previous.checkId)throw Error('请从最新已结束的校准报告发起重试。');
+   let completed;
+   try{completed=await read(path.join(home,'calibrations',previous.checkId,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能重试。');}
+   if(completed.checkId!==previous.checkId||completed.ok!==false||!Array.isArray(completed.results)||completed.results.length!==names.length)throw Error('只有已结束且未通过的校准可以重试。');
+   for(let i=0;i<names.length;i++){
+    const saved=receipt(await read(path.join(home,'calibrations',previous.checkId,'step-'+i+'.json')),names[i],spec);
+    if(JSON.stringify(saved)!==JSON.stringify(completed.results[i]))throw Error('Calibration receipt mismatch');
+   }
+   checkId='retry-'+crypto.createHash('sha256').update(previous.checkId).digest('hex');
+   checks=await within(home,'calibrations/'+checkId);plan={checkId,...identity,retryFrom:previous.checkId};
+  }else if(latest.length===1)return {checkId:latest[0].checkId};
   await fs.mkdir(checks,{recursive:true});
   const dest=path.join(checks,'plan.json');
   try{
@@ -54,7 +85,7 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const tmp=path.join(checks,'plan-'+crypto.randomUUID()+'.tmp');
   try{
    await write(tmp,plan);
-   try{await fs.link(tmp,dest);}catch(e){if(e.code!=='EEXIST')throw e;if(JSON.stringify(await read(dest))!==JSON.stringify(plan))throw Error('Calibration identity conflict');}
+   try{await link(tmp,dest);}catch(e){if(e.code!=='EEXIST')throw e;if(JSON.stringify(await read(dest))!==JSON.stringify(plan))throw Error('Calibration identity conflict');}
   }finally{await fs.rm(tmp,{force:true});}
   return {checkId};
  }
@@ -83,7 +114,7 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
     throw error;
    }
    receipt(result,name,spec);
-   try{await fs.link(path.join(attempt,'receipt.json'),resultPath);}catch(error){if(error.code!=='EEXIST')throw error;if(JSON.stringify(await read(resultPath))!==JSON.stringify(result))throw Error('Calibration receipt conflict');}
+   try{await link(path.join(attempt,'receipt.json'),resultPath);}catch(error){if(error.code!=='EEXIST')throw error;if(JSON.stringify(await read(resultPath))!==JSON.stringify(result))throw Error('Calibration receipt conflict');}
    return publicStep(result);
   }
   const source=path.join(attempt,'source'),output=path.join(attempt,'grade.json');
@@ -105,10 +136,29 @@ module.exports=function calibration({base,within,files,read,write,id,validateSpe
   const tmp=path.join(checks,'finish-'+crypto.randomUUID()+'.tmp');
   try{
    await write(tmp,cal);
-   try{await fs.link(tmp,dest);}catch(e){if(e.code!=='EEXIST')throw e;if(JSON.stringify(await read(dest))!==JSON.stringify(cal))throw Error('Calibration result conflict');}
+   try{await link(tmp,dest);}catch(e){if(e.code!=='EEXIST')throw e;if(JSON.stringify(await read(dest))!==JSON.stringify(cal))throw Error('Calibration result conflict');}
   }finally{await fs.rm(tmp,{force:true});}
   return {checkId:plan.checkId,ok,results:results.map(({name,status,scoreExact})=>({name,status,scoreExact}))};
  }
  async function all(p){const {checkId}=await begin(p);for(let stepIndex=0;stepIndex<names.length;stepIndex++)await step({...p,checkId,step:stepIndex});return finish({...p,checkId});}
- return {begin,step,finish,all};
+ async function idle(p){
+  const parent=path.join(await base(p.root),'calibrations');let entries;
+  try{entries=await fs.readdir(parent);}catch(e){if(e.code==='ENOENT')return {ok:true};throw e;}
+  for(const entry of entries){
+   const folder=await within(await base(p.root),'calibrations/'+id(entry));let plan;
+   try{plan=await read(path.join(folder,'plan.json'));}catch(e){if(e.code==='ENOENT')continue;throw e;}
+   if(plan.id!==p.id||plan.revision!==p.revision)continue;
+   if((await fs.readdir(folder)).some(x=>x.startsWith('attempt-'))){
+    let report;try{report=await read(path.join(folder,'calibration.json'));}catch(e){if(e.code!=='ENOENT')throw e;throw Error('校准尚未结束或执行状态未知，不能结束出题。');}
+    if(plan.checkId!==entry||report.checkId!==entry||typeof report.ok!=='boolean'||!Array.isArray(report.results)||report.results.length!==names.length)throw Error('校准尚未结束或执行状态未知，不能结束出题。');
+    for(let i=0;i<names.length;i++){
+     const saved=await read(path.join(folder,'step-'+i+'.json')),execution=saved?.execution;
+     const legacy=saved?.status==='environment_invalid'&&execution?.code===null&&typeof execution.error==='string'&&execution.error.length>0&&!Object.hasOwn(execution,'timedOut');
+     if(saved?.name!==names[i]||!['graded','environment_invalid'].includes(saved.status)||saved.raw?.status!==saved.status||(!legacy&&typeof execution?.timedOut!=='boolean')||!(execution?.code===null||Number.isInteger(execution?.code))||JSON.stringify(saved)!==JSON.stringify(report.results[i]))throw Error('校准尚未结束或执行状态未知，不能结束出题。');
+    }
+   }
+  }
+  return {ok:true};
+ }
+ return {begin,step,finish,all,idle};
 };

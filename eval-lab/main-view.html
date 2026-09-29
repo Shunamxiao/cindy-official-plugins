@@ -2,6 +2,8 @@
 <header><div><h1>评测工坊</h1><p>用真实工作，找到适合自己的模型。</p></div></header>
 <nav role="tablist" aria-label="评测页面"><button id="tab-run" role="tab" aria-selected="true" aria-controls="run-page">开始评测</button><button id="tab-history" role="tab" aria-selected="false" aria-controls="history-page">历史成绩 <span id="history-count" class="hint">0</span></button></nav><div id="status" role="status" aria-live="polite"></div>
 <button id="resume-author" class="quiet" hidden type="button">继续出题</button>
+<button id="retry-calibration" class="quiet" hidden type="button">重新校准</button><button id="end-author" class="quiet" hidden type="button">结束本次出题</button>
+<dialog id="end-author-dialog" aria-labelledby="end-author-title"><h2 id="end-author-title">结束本次出题</h2><p>保留旧任务、材料和报告，结束后可以创建新题。仍在运行或状态未知时不会结束。</p><div class="dialog-actions"><button data-close>取消</button><button id="confirm-end-author">保留材料并结束</button></div></dialog>
 <section id="run-page" role="tabpanel" aria-labelledby="tab-run">
 <fieldset id="setup"><div class="field-title"><label for="bank">题库</label><button class="quiet hint" id="import">导入题库</button></div>
 <div class="bank-line"><select id="bank" aria-label="选择题库"></select></div>

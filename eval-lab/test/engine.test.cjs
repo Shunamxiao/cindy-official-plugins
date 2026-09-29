@@ -86,7 +86,7 @@ test('file manifests hash streams and respond to cancellation without whole-file
   await assert.rejects(files(root,'',controller.signal),/cancelled/);
  }finally{fs.readFile=original;await fs.rm(root,{recursive:true,force:true});}
 });
-test('prepare cleans partial copies and records, then retries the same run',async()=>{
+test('prepare preserves verified copies and recovers the same unpublished run',async()=>{
  const {files}=require('../node/engine.cjs');
  for(const external of [false,true])for(const fail of ['copy','record','cleanup','conflict']){
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'eval-prepare-failure-')),bank=path.join(root,'bank'),q=path.join(bank,'q'),candidate=path.join(q,'candidate');
@@ -100,14 +100,14 @@ test('prepare cleans partial copies and records, then retries the same run',asyn
    fs.cp=async(...args)=>{await cp(...args);if(fail==='copy')throw Error('copy interrupted');};
    fs.open=async(...args)=>{const h=await open(...args);if(fail==='record'&&/[\/]run-[0-9a-f-]+\.tmp$/.test(String(args[0]))){const write=h.writeFile.bind(h);h.writeFile=async()=>{await write('{partial');await assert.rejects(fs.access(path.join(path.dirname(args[0]),'run.json')));throw Error('record interrupted');};}return h;};
    if(fail==='cleanup')fs.unlink=async target=>{if(/run-[0-9a-f-]+\.tmp$/.test(target))throw Error('cleanup interrupted');return unlink(target);};
-   if(fail==='conflict')fs.link=async(src,dest)=>{await fs.writeFile(dest,'winner');return link(src,dest);};
+   if(fail==='conflict')fs.link=async(src,dest)=>{if(path.basename(dest)==='run.json')await fs.writeFile(dest,'winner');return link(src,dest);};
    if(fail==='cleanup'){const result=await dispatch('prepare',p);assert.equal(JSON.parse(await fs.readFile(path.join(root,'eval-lab-data/runs/retry/run.json'),'utf8')).runId,result.runId);assert.equal(await fs.readFile(path.join(result.workspace,'a.txt'),'utf8'),'answer');continue;}
    if(fail==='conflict'){await assert.rejects(dispatch('prepare',p),{code:'EEXIST'});assert.equal(await fs.readFile(path.join(root,'eval-lab-data/runs/retry/run.json'),'utf8'),'winner');assert.equal(await fs.readFile(path.join(external?workspace:path.join(root,'eval-lab-data/runs/retry/workspace'),'a.txt'),'utf8'),'answer');continue;}
    await assert.rejects(dispatch('prepare',p),/interrupted/);fs.cp=cp;fs.open=open;
    assert.deepEqual(await dispatch('runs',{root}),[]);
    const abandoned=path.join(root,'eval-lab-data/runs/abandoned');await fs.mkdir(abandoned,{recursive:true});
    assert.deepEqual(await dispatch('runs',{root}),[]);
-   if(external)assert.deepEqual(await fs.readdir(workspace),[]);
+   if(external)assert.deepEqual(await fs.readdir(workspace),fail==='copy'?[]:['a.txt']);
    const r=await dispatch('prepare',p);assert.equal(await fs.readFile(path.join(r.workspace,'a.txt'),'utf8'),'answer');
    assert.equal((await dispatch('prepare',p)).runId,r.runId);
   }finally{fs.cp=cp;fs.open=open;fs.unlink=unlink;fs.link=link;await fs.rm(root,{recursive:true,force:true});}

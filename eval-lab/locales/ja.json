@@ -20,6 +20,12 @@
     },
     "calibrate_question": {
       "description": "Execute local grader code from the trusted draft against original, reference and incomplete controls. For page-authored drafts, first confirm task completion and import verified materials, retrying an unfinished handoff if needed. Return a check ID for user freezing in the main page."
+    },
+    "retry_calibration": {
+      "description": "Explicitly retry the latest completed failed calibration while preserving its report. Repeating the same request recovers the same retry; unknown executions are never replayed."
+    },
+    "end_author": {
+      "description": "Explicitly end current authoring while preserving its tasks, materials and reports. A new question is allowed only after execution and calibration finish with no unknown dispatch."
     }
   }
 }

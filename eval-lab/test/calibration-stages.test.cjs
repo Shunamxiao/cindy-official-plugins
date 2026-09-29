@@ -1,5 +1,26 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {dispatch}=require('../node/engine.cjs');
+test('explicit retry retains the failed report and has a stable identity after lost replies',()=>fixture(async(root)=>{
+ const p={root,id:'sample',revision:'v1'},child=require('node:child_process'),spawn=child.spawn;
+ child.spawn=(command,args,options)=>spawn(path.join(root,'missing-python'),args,options);
+ let failed;
+ try{failed=await dispatch('calibrate',p);}finally{child.spawn=spawn;}
+ const old=path.join(root,'eval-lab-data/calibrations',failed.checkId,'calibration.json'),bytes=await fs.readFile(old);
+ const retry={...p,retryFrom:failed.checkId};
+ const [a,b]=await Promise.all([dispatch('calibrate_begin',retry),dispatch('calibrate_begin',retry)]);
+ assert.notEqual(a.checkId,failed.checkId);assert.deepEqual(a,b);
+ assert.deepEqual(await dispatch('calibrate_begin',p),a);
+ const result=await dispatch('calibrate',retry);assert.equal(result.ok,true);
+ assert.deepEqual(await dispatch('calibrate',retry),result);
+ assert.deepEqual(await fs.readFile(old),bytes);
+ await assert.rejects(dispatch('calibrate_begin',{...p,retryFrom:a.checkId}),/retry|重试/);
+}));
+test('explicit retry rejects unfinished or unknown calibration executions',()=>fixture(async(root)=>{
+ const p={root,id:'sample',revision:'v1'},a=await dispatch('calibrate_begin',p);
+ await fs.mkdir(path.join(root,'eval-lab-data/calibrations',a.checkId,'attempt-0'));
+ await assert.rejects(dispatch('calibrate_begin',{...p,retryFrom:a.checkId}),/retry|重试/);
+ assert.equal((await fs.readdir(path.join(root,'eval-lab-data/calibrations'))).length,1);
+}));
 test('spawn failure receipts remain readable and finish without re-executing',()=>fixture(async(root)=>{
  const cp=require('node:child_process'),spawn=cp.spawn;
  const {checkId}=await dispatch('calibrate_begin',{root,id:'sample',revision:'v1'}),p={root,checkId};
@@ -130,3 +151,16 @@ test('calibration copy and cleanup errors never expose source or destination pat
   await assert.rejects(dispatch('calibrate_step',p),/execution is unknown/);
  });
 });
+test('ending authoring requires complete matching receipts, not merely a finished-looking report',()=>fixture(async(root)=>{
+ const p={root,id:'sample',revision:'v1'};
+ assert.deepEqual(await dispatch('calibrate_idle',p),{ok:true});
+ const {checkId}=await dispatch('calibrate_begin',p);
+ await dispatch('calibrate_step',{root,checkId,step:0});
+ await assert.rejects(dispatch('calibrate_idle',p),/不能结束/);
+ for(const step of [1,2])await dispatch('calibrate_step',{root,checkId,step});
+ await dispatch('calibrate_finish',{root,checkId});
+ assert.deepEqual(await dispatch('calibrate_idle',p),{ok:true});
+ const file=path.join(root,'eval-lab-data/calibrations',checkId,'step-1.json');
+ const saved=await fs.readFile(file,'utf8');await fs.writeFile(file,saved.replace('"code": 0','"code": 9'));
+ await assert.rejects(dispatch('calibrate_idle',p),/不能结束/);
+}));

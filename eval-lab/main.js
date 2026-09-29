@@ -3,6 +3,10 @@ function applyAssessment(item,result,fallback='graded'){
 }
 async function settleWorkers(j,team){
   let unavailable;
+  for(const item of j.items.filter(x=>x.released&&x.status==='blocked'&&x.terminalReceipt?.status==='done')){
+   try{applyAssessment(item,await node('grade',{runId:item.runId,receipt:{...item.terminalReceipt,channel:'Orca Worker'}}));}
+   catch(e){if(isTransientReadError(e))throw e;item.error='评分受阻：'+e.message;}
+  }
   for(const item of j.items){const w=team.workers.find(w=>w.label===workerLabel(item.runId));if(w)item.telemetry={acceptedAt:w.acceptedAt,startedAt:w.startedAt,completedAt:workerCompletedAt(w),timingBasis:w.timingBasis,usage:w.usage};}
   for(const item of j.items.filter(x=>!doneItem(x))){
    const matches=team.workers.filter(w=>w.label===workerLabel(item.runId));
@@ -226,7 +230,9 @@ async function installQuestion(args,fromLaunch=false){
  if(typeof activeInstall!=='string')throw Error('Install cancellation unavailable');
  if(downloadCancelled)throw Error('下载已取消');
  channel.postMessage({type:'download-progress',phase:'unpacking'});
- const result=await node('online_install',{...args,operationId:activeInstall,requireHostDownloads:true},undefined,downloadTokens);
+ let current;
+ do{if(downloadCancelled)throw Error('下载已取消');current=await node('online_step',{...args,operationId:activeInstall,requireHostDownloads:true},undefined,downloadTokens);}while(!current.done);
+ const result=current.result;
  // Successful atomic publication is final even if cancellation arrives late.
  channel.postMessage({type:'download-progress',phase:'ready'});
  return result;
@@ -453,9 +459,39 @@ async function assertRootChangeAllowed(c){
  if(launching||['running','stopping'].includes(c.batch?.status))throw Error('评测尚未结束，请完成或停止评测后再更改数据目录。');
 }
 async function action(name,args={},callId){
+ if(['end_author','retry_calibration'].includes(name)){
+  if(authorStarting||authorChecking)throw Error('已有出题任务正在启动，请等待完成。');
+  authorStarting=true;
+  try{
+   const c=await readyConfig(),a=c.author;
+   if(name==='end_author'&&(c.authorHistory||[]).some(x=>x.id===args.id&&x.revision===args.revision))return {ok:true};
+   if(!a||a.id!==args.id||a.revision!==args.revision)throw Error('出题身份已变化，请刷新后重试。');
+   if(a.pendingCreate||a.pendingSend||a.status==='drafting')throw Error('出题派发或材料状态未知，请先继续出题核对结果。');
+   if(name==='retry_calibration'){
+    const retryFrom=a.retryFrom||args.checkId;
+    if(!retryFrom||(!a.retryFrom&&(a.calibration?.checkId!==retryFrom||a.calibration?.ok!==false)))throw Error('请从最新已结束的校准报告发起重试。');
+    await updateConfig(c=>({...c,author:{...c.author,retryFrom}}));
+    const result=await node('calibrate',{id:a.id,revision:a.revision,retryFrom},callId);
+    await updateConfig(c=>{const author={...c.author,...calibrationState(result)};delete author.retryFrom;return {...c,author};});
+    return result;
+   }
+   if(a.retryFrom)throw Error('校准尚未结束或执行状态未知，不能结束出题。');
+   if(a.runId){const run=await cindy.tasks.getRun({runId:a.runId});if(!run||run.runId!==a.runId||run.taskId!==a.taskId||!terminalRun(run))throw Error('出题仍在运行或状态未知，不能结束。');}
+   if(a.taskId){
+    let after;const seen=new Set();
+    do{const page=await cindy.tasks.listRuns({taskId:a.taskId,...(after?{after}:{})});
+     if(!Array.isArray(page.items)||page.items.some(r=>!r||r.taskId!==a.taskId||!terminalRun(r)))throw Error('出题仍在运行或状态未知，不能结束。');
+     after=page.nextCursor;if(after&&seen.has(after))throw Error('出题仍在运行或状态未知，不能结束。');if(after)seen.add(after);
+    }while(after);
+   }
+   await node('calibrate_idle',{id:a.id,revision:a.revision},callId);
+   await updateConfig(c=>({...c,author:null,authorHistory:[...(c.authorHistory||[]),{...a,root:c.root||c.profile,endedAt:new Date().toISOString()}]}));
+   return {ok:true};
+  }finally{authorStarting=false;}
+ }
  if(launching&&['setup_root','setup_bank','save_source'].includes(name))throw Error('评测正在准备，完成后可更改设置');
- if(name==='setup_root'||name==='setup_bank'){if(name==='setup_root')await assertRootChangeAllowed(await config());const r=await checked(cindy.pick({mode:'directory',title:name==='setup_root'?'选择评测数据保存目录':'选择解压后的评测题包目录'}));if(r.cancelled)return {cancelled:true};if(name==='setup_root')await updateConfig(async c=>{await assertRootChangeAllowed(c);return {...c,root:r.path};});else {await checked(cindy.node.request({method:'bank',params:{root:(await readyConfig()).root,bank:r.path},timeoutMs:30000}));await updateConfig(c=>({...c,importedBanks:[...(c.importedBanks||[]).filter(b=>b.path!==r.path),{id:crypto.randomUUID(),name:r.name||'导入题库',path:r.path}]}));}return {name:r.name};}
- if(name==='status'){await checkAuthor();let models=[],modelError=null;try{models=await readModels();}catch(e){modelError=e.message;}void advanceBatch().catch(()=>{});const c=await readyConfig();const job=jobView(c.batch);const bank=await questionCatalog();const defaults=bank.defaults;const extra=bank.questions.filter(q=>!defaults.some(d=>q.key===d.key));return {configured:true,models,modelError,modelsUpdatedAt:modelError?null:new Date().toISOString(),automaticRoot:!c.root||c.automaticRoot,bank:{questions:[...defaults,...extra]},banks:[{id:'default',name:'Cindy 实战题库',error:bank.catalogError,questions:defaults},...(c.importedBanks||[]).map(b=>({id:'imported:'+b.id,name:b.name,error:bank.errors?.find(e=>e.id===b.id)?.message,questions:bank.questions.filter(q=>q.key.startsWith('imported:'+b.id+':'))})),...extra.filter(q=>!q.key.startsWith('imported:')).map(q=>({id:q.key,name:(c.draftNames||{})[q.key.split('@')[0].replace('custom:','')]||q.title,questions:[q]}))],runs:await node('runs'),drafts:await node('drafts'),author:c.author?{status:c.author.status,error:c.author.error,canResume:!!(c.author.status==='drafting'||c.author.pendingCreate||c.author.pendingSend)}:null,job:job||c.job||null,indexUrl:c.indexUrl||DEFAULT_INDEX};}
+ if(name==='setup_root'||name==='setup_bank'){if(name==='setup_root')await assertRootChangeAllowed(await config());const r=await checked(cindy.pick({mode:'directory',title:name==='setup_root'?'选择评测数据保存目录':'选择解压后的评测题包目录'}));if(r.cancelled)return {cancelled:true};if(name==='setup_root'){await checked(cindy.node.request({method:'validate_storage',params:{root:r.path},timeoutMs:30000}));await updateConfig(async c=>{await assertRootChangeAllowed(c);return {...c,root:r.path};});}else {await checked(cindy.node.request({method:'bank',params:{root:(await readyConfig()).root,bank:r.path},timeoutMs:30000}));await updateConfig(c=>({...c,importedBanks:[...(c.importedBanks||[]).filter(b=>b.path!==r.path),{id:crypto.randomUUID(),name:r.name||'导入题库',path:r.path}]}));}return {name:r.name};}
+ if(name==='status'){await checkAuthor();let models=[],modelError=null;try{models=await readModels();}catch(e){modelError=e.message;}void advanceBatch().catch(()=>{});const c=await readyConfig();const job=jobView(c.batch);const bank=await questionCatalog();const defaults=bank.defaults;const extra=bank.questions.filter(q=>!defaults.some(d=>q.key===d.key));return {configured:true,models,modelError,modelsUpdatedAt:modelError?null:new Date().toISOString(),automaticRoot:!c.root||c.automaticRoot,bank:{questions:[...defaults,...extra]},banks:[{id:'default',name:'Cindy 实战题库',error:bank.catalogError,questions:defaults},...(c.importedBanks||[]).map(b=>({id:'imported:'+b.id,name:b.name,error:bank.errors?.find(e=>e.id===b.id)?.message,questions:bank.questions.filter(q=>q.key.startsWith('imported:'+b.id+':'))})),...extra.filter(q=>!q.key.startsWith('imported:')).map(q=>({id:q.key,name:(c.draftNames||{})[q.key.split('@')[0].replace('custom:','')]||q.title,questions:[q]}))],runs:await node('runs'),drafts:await node('drafts'),author:c.author?{id:c.author.id,revision:c.author.revision,checkId:c.author.retryFrom||c.author.calibration?.checkId,canRetry:!!(c.author.retryFrom||c.author.calibration?.ok===false),canEnd:['failed','completed','calibrated'].includes(c.author.status),status:c.author.status,error:c.author.error,canResume:!!(c.author.status==='drafting'||c.author.pendingCreate||c.author.pendingSend)}:null,job:job||c.job||null,indexUrl:c.indexUrl||DEFAULT_INDEX};}
  if(name==='save_source'){await updateConfig(c=>({...c,indexUrl:args.url}));return {ok:true};}
  if(name==='start'){
   if(launching)throw Error('评测正在准备，请勿重复启动');launching=true;launchCancelled=false;downloadCancelled=false;
@@ -511,6 +547,7 @@ async function action(name,args={},callId){
   if(current?.status!=='drafting'&&await authorPending(current))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
   await taskCapability();const resuming=current?.status==='drafting',draftId=resuming?current.id:args.id||'question-'+crypto.randomUUID();const revision=resuming?current.revision:args.revision||'v1';
   draftIdentifier(draftId);draftIdentifier(revision);
+  if(((await config()).authorHistory||[]).some(x=>x.id===draftId&&x.revision===revision))throw Error('此出题已结束并保留为历史，请使用新的题目标识或版本。');
   if(!resuming)await updateConfig(c=>({...c,author:{id:draftId,revision,status:'drafting'}}));
   const drafted=await node('draft',{...args,id:draftId,revision,resume:resuming},callId);
   if(drafted.status==='input_required'){
@@ -529,6 +566,11 @@ async function action(name,args={},callId){
   authorStarting=true;
   try{
    const a=(await config()).author,matching=a&&a.id===args.id&&a.revision===args.revision;
+   if(((await config()).authorHistory||[]).some(x=>x.id===args.id&&x.revision===args.revision))throw Error('此出题已结束并保留为历史，请使用新的题目标识或版本。');
+   if(name==='freeze'){
+    const draft=(await node('drafts')).find(x=>x.checkId===args.checkId);
+    if(draft&&((await config()).authorHistory||[]).some(x=>x.id===draft.id&&x.revision===draft.revision))throw Error('此出题已结束并保留为历史，请使用新的题目标识或版本。');
+   }
    if(name==='create_question_draft'){
     draftIdentifier(args.id);draftIdentifier(args.revision);
     if((!matching&&await authorPending(a))||(matching&&(a.runId||a.pendingCreate||a.pendingSend)))throw Error('已有出题任务尚未结束，请等待完成后再创建。');
@@ -542,8 +584,8 @@ async function action(name,args={},callId){
     return result;
    }
    if(name==='calibrate_question'&&matching&&a.handoff)await collectAuthor(a);
-   const result=await node(name==='calibrate_question'?'calibrate':name==='create_question_draft'?'draft':'freeze',args,callId);
-   if(name==='calibrate_question'&&matching)await updateConfig(c=>({...c,author:{...c.author,...calibrationState(result)}}));
+   const result=await node(name==='calibrate_question'?'calibrate':name==='create_question_draft'?'draft':'freeze',name==='calibrate_question'&&matching&&a.retryFrom?{...args,retryFrom:a.retryFrom}:args,callId);
+   if(name==='calibrate_question'&&matching)await updateConfig(c=>{const author={...c.author,...calibrationState(result)};delete author.retryFrom;return {...c,author};});
    return result;
   }finally{authorStarting=false;}
  }
